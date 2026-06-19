@@ -22,6 +22,8 @@ const planning: Bot = {
   displayName: '기획',
   shared: false,
   memoryMode: 'task',
+  // Each planning request gets its own public thread (one thread per idea).
+  threadPerMessage: true,
   usage: '거친 아이디어를 적으면 실행 가능한 기획(문제·목표·범위·마일스톤·리스크·다음 할 일)으로 구조화해줘요. · 대화 초기화: /end',
   allowedTools: ['WebSearch', 'WebFetch', 'Read', 'Write'],
   persona: [
@@ -47,6 +49,8 @@ const travel: Bot = {
   displayName: '여행',
   shared: false,
   memoryMode: 'task',
+  // Each trip gets its own public thread (one thread per itinerary).
+  threadPerMessage: true,
   usage: '목적지·기간·예산·동행·취향을 알려주면 일자별 일정을 짜줘요. 예: "3박4일 도쿄, 2명, 100만원, 미식 위주". · 대화 초기화: /end',
   allowedTools: ['WebSearch', 'WebFetch', 'Read'],
   persona: [

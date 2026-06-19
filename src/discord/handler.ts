@@ -261,20 +261,51 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
   const channel = message.channel;
   if (!channel.isSendable()) return;
 
+  // Determine the reply channel + the thread id that scopes this conversation.
   // conversationKey is ALWAYS derived from the message author → a user can never
   // be routed into another user's tmux window / workspace, regardless of which
   // channel or thread the message arrived in.
-  const key = conversationKey(bot, message.author.id);
-
-  // --- Shared-bot private-thread routing ---
-  // For a shared bot, isolate each user in their own private thread under the
-  // shared parent channel. Personal bots reply in-channel (current behavior).
   let replyChannel: SendableChannels = channel;
+  let threadId: string | undefined;
+
   if (bot.shared) {
-    const resolved = await resolveSharedReplyChannel(message, channel, bot, key, bridge);
+    // --- Shared-bot private-thread routing ---
+    // For a shared bot, isolate each user in their own private thread under the
+    // shared parent channel.
+    const resolved = await resolveSharedReplyChannel(
+      message,
+      channel,
+      bot,
+      conversationKey(bot, message.author.id),
+      bridge,
+    );
     if (!resolved) return; // couldn't establish an isolated thread; bail (logged).
     replyChannel = resolved;
+  } else if (bot.threadPerMessage) {
+    // --- Per-question public-thread routing ---
+    // Each new question in the parent channel starts its OWN public thread,
+    // anchored to the message; the reply + follow-ups live there. Each thread is
+    // an isolated conversation (its id further-scopes the author-derived key).
+    if (channel.isThread()) {
+      // Follow-up inside an existing question-thread → continue here.
+      replyChannel = channel;
+      threadId = channel.id;
+    } else if (channel.type === ChannelType.GuildText) {
+      // New question in the parent channel → start a public thread from this message.
+      const name = (text.slice(0, 90) || bot.displayName).trim();
+      try {
+        const thread = await message.startThread({ name, autoArchiveDuration: 1440 });
+        replyChannel = thread;
+        threadId = thread.id;
+      } catch (err) {
+        console.error('[handler] failed to start per-question thread; replying in channel:', err);
+      }
+    }
   }
+
+  // conversationKey is ALWAYS derived from the author (invariant). threadId (when
+  // present) only FURTHER-scopes threadPerMessage bots to one conversation per thread.
+  const key = conversationKey(bot, message.author.id, threadId);
 
   // --- Status surface: ⏳/✅/⚠️ reactions + typing ---
   // The channel TOPIC is reserved for the bot's usage guide, so progress is shown

@@ -19,13 +19,20 @@ export function findBotForChannel(channelName: string | null | undefined): Bot |
 /**
  * Computes the conversation key — the identity of one tmux window / working dir.
  *
+ * - threadPerMessage bot (with threadId) → `botId__thread_<threadId>` (one
+ *   isolated window per question-thread).
  * - Personal bot  → `botId`            (one window for me).
  * - Shared bot    → `botId__userId`    (one isolated window per user).
  *
  * The key is also used as the tmux window name and the working-dir folder name,
  * so it is constrained to a filesystem/tmux-safe charset.
+ *
+ * Invariant: the key is ALWAYS derived from the message AUTHOR (userId / shared
+ * gate); a threadId only FURTHER-scopes a threadPerMessage bot, it never replaces
+ * author derivation, so a user can never be routed into another user's window.
  */
-export function conversationKey(bot: Bot, userId: string): string {
+export function conversationKey(bot: Bot, userId: string, threadId?: string): string {
+  if (bot.threadPerMessage && threadId) return `${bot.id}__thread_${threadId}`;
   return bot.shared ? `${bot.id}__${userId}` : bot.id;
 }
 

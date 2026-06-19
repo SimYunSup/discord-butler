@@ -319,111 +319,165 @@ export class Bridge {
   }
 
   /**
-   * Tails the events JSONL for the next Stop event and resolves with the
-   * assistant's final message text. Forwards any Notification events seen along
-   * the way via the callback. Rejects on timeout.
+   * Awaits the next Stop event on the conversation's events file. Delegates to
+   * the exported {@link tailEventsForStop} with this bridge's idle + absolute
+   * deadlines.
    *
-   * Implementation: record the file's current size, then poll for growth and
-   * parse only newly-appended complete lines. (A polling tail keeps this
-   * dependency-free and robust to the file not existing yet.)
+   * @param maxTimeoutMs absolute backstop (defaults to the reply timeout); a flush
+   *   turn passes a smaller cap so a wedged flush can't hang /end.
    */
   private awaitNextStop(
     eventsPath: string,
     cb: BridgeCallbacks,
-    timeoutMs: number = this.config.replyTimeoutMs,
+    maxTimeoutMs: number = this.config.replyTimeoutMs,
   ): Promise<string> {
-    const pollMs = 250;
-
-    return new Promise<string>((resolvePromise, rejectPromise) => {
-      let offset = 0;
-      let carry = '';
-      let settled = false;
-      let timer: NodeJS.Timeout | undefined;
-
-      // Arm the timeout up front; finish() clears it.
-      const deadline = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        rejectPromise(new Error(`no Stop hook within ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      const finish = (fn: () => void): void => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        clearTimeout(deadline);
-        fn();
-      };
-
-      const handleLine = (line: string): void => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        let evt: HookEvent;
-        try {
-          evt = JSON.parse(trimmed) as HookEvent;
-        } catch {
-          return; // ignore malformed/partial lines
-        }
-        if (evt.event === 'Notification') {
-          const message =
-            typeof evt.payload.message === 'string' ? evt.payload.message : '권한/입력 대기';
-          const notificationType =
-            typeof evt.payload.notification_type === 'string'
-              ? evt.payload.notification_type
-              : undefined;
-          // `idle_prompt` fires when claude sits idle waiting for input (e.g. a turn
-          // that errored out and never produced a Stop). It is NOT actionable for the
-          // Discord user (they ARE the input source) and would otherwise spam the
-          // channel every idle interval while an awaiter hangs. Stuck turns still
-          // surface via the reply timeout, so drop these.
-          if (notificationType === 'idle_prompt') return;
-          void cb.onNotification?.(message, notificationType);
-          return;
-        }
-        if (evt.event === 'Stop') {
-          finish(() => resolvePromise(extractAssistantText(evt.payload)));
-        }
-      };
-
-      const poll = async (): Promise<void> => {
-        if (settled) return;
-        try {
-          const s = await stat(eventsPath).catch(() => undefined);
-          if (s && s.size > offset) {
-            const fh = await open(eventsPath, 'r');
-            try {
-              const length = s.size - offset;
-              const buf = Buffer.alloc(length);
-              await fh.read(buf, 0, length, offset);
-              offset = s.size;
-              carry += buf.toString('utf8');
-              const parts = carry.split('\n');
-              carry = parts.pop() ?? ''; // last element may be a partial line
-              for (const part of parts) handleLine(part);
-            } finally {
-              await fh.close();
-            }
-          }
-        } catch {
-          // transient FS error; keep polling until timeout.
-        }
-        if (!settled) timer = setTimeout(() => void poll(), pollMs);
-      };
-
-      // Seek to end-of-file (so we only see events appended from now on) and
-      // start polling. The timeout above fires if no Stop arrives in time.
-      void (async () => {
-        try {
-          const s = await stat(eventsPath);
-          offset = s.size;
-        } catch {
-          offset = 0; // file not created yet; start from the beginning when it appears.
-        }
-        void poll();
-      })();
+    return tailEventsForStop(eventsPath, cb, {
+      idleTimeoutMs: this.config.idleTimeoutMs,
+      maxTimeoutMs,
     });
   }
+}
+
+/** Deadlines for {@link tailEventsForStop}. */
+export interface TailOptions {
+  /** Reject after this long with NO hook activity (heartbeats reset it). */
+  idleTimeoutMs: number;
+  /** Reject after this long regardless of activity (absolute backstop). */
+  maxTimeoutMs: number;
+  /** Poll cadence for the file tail (ms). Default 250. */
+  pollMs?: number;
+}
+
+/**
+ * Tails the events JSONL for the next Stop event and resolves with the
+ * assistant's final message text. Forwards any Notification events seen along
+ * the way via the callback.
+ *
+ * Two deadlines guard the wait:
+ *  - an IDLE deadline that rejects only after `idleTimeoutMs` with NO hook
+ *    activity — any parsed event (Stop / Notification / PreToolUse / PostToolUse)
+ *    resets it, so an actively-working bot never times out; and
+ *  - an absolute `maxTimeoutMs` backstop that rejects regardless of activity.
+ *
+ * An `idle_prompt` Notification means claude is sitting idle / wedged (e.g. after
+ * an API error). It must NOT reset the idle deadline — otherwise a wedged turn
+ * would never reject via the idle path — and it is not surfaced to Discord (the
+ * user IS the input source). PreToolUse/PostToolUse are heartbeats: they reset
+ * the idle deadline but are not surfaced either.
+ *
+ * Implementation: record the file's current size, then poll for growth and parse
+ * only newly-appended complete lines. (A polling tail keeps this dependency-free
+ * and robust to the file not existing yet.)
+ */
+export function tailEventsForStop(
+  eventsPath: string,
+  cb: BridgeCallbacks,
+  opts: TailOptions,
+): Promise<string> {
+  const pollMs = opts.pollMs ?? 250;
+
+  return new Promise<string>((resolvePromise, rejectPromise) => {
+    let offset = 0;
+    let carry = '';
+    let settled = false;
+    let pollTimer: NodeJS.Timeout | undefined;
+    let idleTimer: NodeJS.Timeout | undefined;
+
+    const cleanup = (): void => {
+      if (pollTimer) clearTimeout(pollTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(maxTimer);
+    };
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+    // (Re)arm the idle deadline; any activity calls this to push it back.
+    const resetIdle = (): void => {
+      if (settled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        finish(() => rejectPromise(new Error(`no Stop hook: idle ${opts.idleTimeoutMs}ms`)));
+      }, opts.idleTimeoutMs);
+    };
+    // Absolute backstop: fires regardless of activity.
+    const maxTimer = setTimeout(() => {
+      finish(() => rejectPromise(new Error(`no Stop hook: exceeded max ${opts.maxTimeoutMs}ms`)));
+    }, opts.maxTimeoutMs);
+
+    const handleLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let evt: HookEvent;
+      try {
+        evt = JSON.parse(trimmed) as HookEvent;
+      } catch {
+        return; // ignore malformed/partial lines
+      }
+      // An idle_prompt Notification (claude wedged / waiting on input) must NOT
+      // reset the idle deadline; every other event counts as activity.
+      const isIdlePrompt =
+        evt.event === 'Notification' && evt.payload?.notification_type === 'idle_prompt';
+      if (!isIdlePrompt) resetIdle();
+      // Heartbeats: consumed only to reset the idle deadline (done above); not surfaced.
+      if (evt.event === 'PreToolUse' || evt.event === 'PostToolUse') return;
+      if (evt.event === 'Notification') {
+        const message =
+          typeof evt.payload.message === 'string' ? evt.payload.message : '권한/입력 대기';
+        const notificationType =
+          typeof evt.payload.notification_type === 'string'
+            ? evt.payload.notification_type
+            : undefined;
+        // `idle_prompt` is not actionable for the Discord user; drop it (stuck turns
+        // still surface via the idle/absolute deadlines above).
+        if (notificationType === 'idle_prompt') return;
+        void cb.onNotification?.(message, notificationType);
+        return;
+      }
+      if (evt.event === 'Stop') {
+        finish(() => resolvePromise(extractAssistantText(evt.payload)));
+      }
+    };
+
+    const poll = async (): Promise<void> => {
+      if (settled) return;
+      try {
+        const s = await stat(eventsPath).catch(() => undefined);
+        if (s && s.size > offset) {
+          const fh = await open(eventsPath, 'r');
+          try {
+            const length = s.size - offset;
+            const buf = Buffer.alloc(length);
+            await fh.read(buf, 0, length, offset);
+            offset = s.size;
+            carry += buf.toString('utf8');
+            const parts = carry.split('\n');
+            carry = parts.pop() ?? ''; // last element may be a partial line
+            for (const part of parts) handleLine(part);
+          } finally {
+            await fh.close();
+          }
+        }
+      } catch {
+        // transient FS error; keep polling until a deadline fires.
+      }
+      if (!settled) pollTimer = setTimeout(() => void poll(), pollMs);
+    };
+
+    // Arm the idle deadline, seek to end-of-file (so we only see events appended
+    // from now on), and start polling. The deadlines above fire if no Stop arrives.
+    resetIdle();
+    void (async () => {
+      try {
+        offset = (await stat(eventsPath)).size;
+      } catch {
+        offset = 0; // file not created yet; start from the beginning when it appears.
+      }
+      void poll();
+    })();
+  });
 }
 
 /**

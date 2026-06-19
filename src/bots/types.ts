@@ -69,6 +69,14 @@ export interface Bot {
    */
   threadNameFromMessage?: boolean;
   /**
+   * For PERSONAL bots: every message in the parent channel starts its OWN public
+   * thread (anchored to the message, named from it), and the reply + any follow-ups
+   * live in that thread. Each thread is an isolated conversation (key includes the
+   * thread id). Keeps a busy channel tidy — one thread per question.
+   * Mutually exclusive with `shared` (which uses per-USER private threads).
+   */
+  threadPerMessage?: boolean;
+  /**
    * Optional MCP server definitions, written verbatim into the workspace's
    * `.mcp.json` as `{ "mcpServers": <this> }`. String values may contain
    * `${VAR}` placeholders, substituted from process.env at write time (so

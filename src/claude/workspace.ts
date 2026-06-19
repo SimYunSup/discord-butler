@@ -104,10 +104,11 @@ function substituteEnv(value: unknown): unknown {
 /**
  * Builds the `.claude/settings.json` for a conversation workspace.
  *
- * Registers a Stop hook and a Notification hook, both invoking the shared
- * `scripts/hook-emit.mjs` to append the event payload to
+ * Registers Stop, Notification, and PreToolUse/PostToolUse hooks, all invoking
+ * the shared `scripts/hook-emit.mjs` to append the event payload to
  * `data/events/<key>.jsonl`. The bridge tails that file to detect completion
- * (Stop) and permission/idle prompts (Notification).
+ * (Stop), permission/idle prompts (Notification), and tool-call heartbeats
+ * (PreToolUse/PostToolUse) that reset its idle deadline during active work.
  *
  * Also writes a permissions allowlist from the bot's allowedTools so safe bots
  * run without interactive prompts (위험봇은 추후 Notification 버튼 승인).
@@ -150,6 +151,11 @@ function renderSettingsJson(bot: Bot, hookScriptPath: string, eventsPath: string
           hooks: [{ type: 'command', command: command('Notification') }],
         },
       ],
+      // Heartbeats: fire on every tool call so the bridge's idle deadline resets
+      // while the bot is actively working (long research/coding tasks). Not surfaced
+      // to Discord — the bridge consumes them only to tell "working" from "wedged".
+      PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: command('PreToolUse') }] }],
+      PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: command('PostToolUse') }] }],
     },
   };
 

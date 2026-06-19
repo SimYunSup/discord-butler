@@ -14,8 +14,10 @@ export interface ButlerConfig {
   claudeBin: string;
   /** Path (or bare name) of the `tmux` binary. */
   tmuxBin: string;
-  /** How long the bridge waits for a Stop hook before timing out a reply (ms). */
+  /** How long the bridge waits for a Stop hook before timing out a reply (ms). Absolute backstop. */
   replyTimeoutMs: number;
+  /** Idle window (ms): reject only after this long with no hook activity (heartbeats reset it). */
+  idleTimeoutMs: number;
   /** localhost HTTP trigger server port (BUTLER_HTTP_PORT, default 8787). */
   httpPort: number;
   /** Shared secret for the trigger webhook; if empty, the server is disabled. */
@@ -46,10 +48,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     ? resolve(env.BUTLER_DATA_DIR.trim())
     : resolve(repoRoot(), 'data');
 
+  // Absolute backstop for one reply (the idle window below is the real guard).
   const replyTimeoutRaw = env.BUTLER_REPLY_TIMEOUT_MS?.trim();
-  const replyTimeoutMs = replyTimeoutRaw ? Number.parseInt(replyTimeoutRaw, 10) : 600_000;
+  const replyTimeoutMs = replyTimeoutRaw ? Number.parseInt(replyTimeoutRaw, 10) : 3_600_000;
   if (!Number.isFinite(replyTimeoutMs) || replyTimeoutMs <= 0) {
     throw new Error(`BUTLER_REPLY_TIMEOUT_MS must be a positive integer; got "${replyTimeoutRaw}".`);
+  }
+  // Idle window: reject only after this long with NO hook activity (PreToolUse/
+  // PostToolUse heartbeats keep an actively-working bot alive indefinitely).
+  const idleTimeoutRaw = env.BUTLER_IDLE_TIMEOUT_MS?.trim();
+  const idleTimeoutMs = idleTimeoutRaw ? Number.parseInt(idleTimeoutRaw, 10) : 1_800_000; // 30 min
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) {
+    throw new Error(`BUTLER_IDLE_TIMEOUT_MS must be a positive integer; got "${idleTimeoutRaw}".`);
   }
 
   const httpPortRaw = env.BUTLER_HTTP_PORT?.trim();
@@ -65,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     claudeBin: env.CLAUDE_BIN?.trim() || 'claude',
     tmuxBin: env.TMUX_BIN?.trim() || 'tmux',
     replyTimeoutMs,
+    idleTimeoutMs,
     httpPort,
     triggerToken,
   };

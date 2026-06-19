@@ -19,3 +19,15 @@ it('parses BUTLER_HTTP_PORT and BUTLER_TRIGGER_TOKEN', () => {
 it('throws on invalid BUTLER_HTTP_PORT', () => {
   assert.throws(() => loadConfig({ ...base, BUTLER_HTTP_PORT: 'abc' }));
 });
+
+it('defaults replyTimeoutMs=3600000 (backstop) and idleTimeoutMs=1800000', () => {
+  const c = loadConfig({ ...base });
+  assert.equal(c.replyTimeoutMs, 3_600_000);
+  assert.equal(c.idleTimeoutMs, 1_800_000);
+});
+
+it('parses BUTLER_IDLE_TIMEOUT_MS and throws on invalid', () => {
+  assert.equal(loadConfig({ ...base, BUTLER_IDLE_TIMEOUT_MS: '60000' }).idleTimeoutMs, 60_000);
+  assert.throws(() => loadConfig({ ...base, BUTLER_IDLE_TIMEOUT_MS: '0' }));
+  assert.throws(() => loadConfig({ ...base, BUTLER_IDLE_TIMEOUT_MS: 'abc' }));
+});

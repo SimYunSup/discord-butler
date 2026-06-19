@@ -10,6 +10,7 @@ const cfg: ButlerConfig = {
   claudeBin: 'claude',
   tmuxBin: 'tmux',
   replyTimeoutMs: 1000,
+  idleTimeoutMs: 1000,
   httpPort: 0,
   triggerToken: 'secret',
 };
