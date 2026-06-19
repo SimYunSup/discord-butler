@@ -372,6 +372,12 @@ export class Bridge {
             typeof evt.payload.notification_type === 'string'
               ? evt.payload.notification_type
               : undefined;
+          // `idle_prompt` fires when claude sits idle waiting for input (e.g. a turn
+          // that errored out and never produced a Stop). It is NOT actionable for the
+          // Discord user (they ARE the input source) and would otherwise spam the
+          // channel every idle interval while an awaiter hangs. Stuck turns still
+          // surface via the reply timeout, so drop these.
+          if (notificationType === 'idle_prompt') return;
           void cb.onNotification?.(message, notificationType);
           return;
         }
