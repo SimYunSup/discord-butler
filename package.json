@@ -1,0 +1,30 @@
+{
+  "name": "discord-butler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord butler platform — each channel is a bot backed by a Claude Code (claude) instance in a tmux window. Markdown storage, no DB.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsdown --watch",
+    "build": "tsdown",
+    "start": "node dist/index.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "discord.js": "^14"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@types/node": "^22",
+    "eslint": "^9",
+    "tsdown": "^0.22.3",
+    "tsx": "^4.22.4",
+    "typescript": "^5",
+    "typescript-eslint": "^8"
+  }
+}

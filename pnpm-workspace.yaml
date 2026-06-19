@@ -1,0 +1,7 @@
+# tsdown(rolldown 기반)이 설정파일 로딩에 tsx를 쓰면서 esbuild가 transitive로 딸려온다.
+# 실제 번들링은 rolldown이 수행하므로, esbuild의 postinstall 빌드 스크립트는 실행하지 않는다.
+# 결정을 명시(false)해야 pnpm 11이 ERR_PNPM_IGNORED_BUILDS로 install을 중단하지 않는다.
+# protobufjs는 wattpm(@platformatic) transitive 의존성. postinstall 빌드 없이도 동작하므로 false.
+allowBuilds:
+  esbuild: false
+  protobufjs: false
