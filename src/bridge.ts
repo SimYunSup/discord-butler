@@ -9,6 +9,7 @@ import { SessionMapStore } from './persistence/session-map.js';
 import { ensureWorkspace, eventsFile } from './claude/workspace.js';
 import { ensureTrusted } from './claude/trust.js';
 import { sanitizeKey } from './router.js';
+import { KeyedQueue } from './keyed-queue.js';
 
 /** Absolute path to scripts/hook-emit.mjs (sibling of the repo root's scripts/). */
 function hookScriptPath(): string {
@@ -96,6 +97,8 @@ export class Bridge {
   private readonly tmux: TmuxManager;
   private readonly sessions: SessionMapStore;
   private readonly hookScript: string;
+  /** Serializes turns per conversation key (see handleMessage). */
+  private readonly queue = new KeyedQueue();
 
   constructor(private readonly config: ButlerConfig) {
     this.tmux = new TmuxManager(config.tmuxBin, config.claudeBin);
@@ -111,6 +114,14 @@ export class Bridge {
   /**
    * Handles one user message for a conversation.
    *
+   * Turns are SERIALIZED per conversation key: if the user sends several messages
+   * in quick succession, each waits for the previous turn to finish instead of
+   * running concurrently. This is essential — every concurrent turn would tail the
+   * same per-conversation events file and resolve on the next `Stop` it sees, so
+   * overlapping turns all latch onto the SAME `Stop` event and post the identical
+   * reply multiple times. Serializing also keeps send-keys from injecting text
+   * into a still-busy claude REPL.
+   *
    * @param bot   owning bot
    * @param key   conversation key (router.conversationKey)
    * @param text  user's message text
@@ -122,6 +133,17 @@ export class Bridge {
     text: string,
     cb: BridgeCallbacks,
     attachments: IncomingAttachment[] = [],
+  ): Promise<void> {
+    return this.queue.run(key, () => this.runTurn(bot, key, text, cb, attachments));
+  }
+
+  /** The actual turn body, run under the per-key queue (see handleMessage). */
+  private async runTurn(
+    bot: Bot,
+    key: string,
+    text: string,
+    cb: BridgeCallbacks,
+    attachments: IncomingAttachment[],
   ): Promise<void> {
     const windowName = sanitizeKey(key);
 
