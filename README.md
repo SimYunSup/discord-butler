@@ -1,5 +1,7 @@
 # discord-butler
 
+**English** · [한국어](README.ko.md)
+
 A Discord "butler" platform where **each Discord channel is a bot**. Talk to a
 channel in natural language and a dedicated **[Claude Code](https://www.anthropic.com/claude-code)
 (`claude`) instance running inside a tmux window** answers, relaying the reply
@@ -80,6 +82,10 @@ pnpm build && pnpm start    # or: pnpm dev
 ```
 
 `.env` keys are documented in `.env.example`. Only `DISCORD_TOKEN` is required.
+
+> **Running it on a dedicated box?** See [docs/self-hosting.md](docs/self-hosting.md)
+> for a step-by-step bilingual (EN/KO) guide — from buying a mini PC (RAM/SSD) to a
+> `systemd` service that restarts on reboot.
 
 Invite the bot to your guild with **Manage Channels** so it can create the
 categories and one channel per bot on first run. A long-lived tmux server must be
