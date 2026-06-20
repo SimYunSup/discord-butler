@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   console.log(`[butler] data dir: ${config.dataDir}`);
   console.log(`[butler] claude bin: ${config.claudeBin}, tmux bin: ${config.tmuxBin}`);
+  console.log(`[butler] default agent: ${config.defaultAgent}`);
 
   const bridge = new Bridge(config);
   const client = createClient();

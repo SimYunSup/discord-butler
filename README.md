@@ -46,6 +46,23 @@ the completed reply back. Adding a bot is adding one config object.
   render Discord buttons; a ` ```butler-file ` block attaches a file from the
   conversation workspace.
 
+## Agent backends
+
+The agent that drives a conversation's tmux window is **pluggable** (see
+`src/agents/`). Each bot can set an `agent` field, or a global default is set via
+`BUTLER_AGENT` (default `claude`):
+
+| `agent` | What it runs |
+|---------|--------------|
+| `claude` *(default)* | the `claude` Claude Code CLI |
+| `kimi` | the **same** Claude Code CLI pointed at Moonshot's Anthropic-compatible endpoint via env (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) — set `KIMI_AUTH_TOKEN` (and optionally `KIMI_BASE_URL`/`KIMI_MODEL`) |
+
+Because `kimi` is still Claude Code (only the model provider changes), the Stop/
+Notification hooks, folder trust, and `CLAUDE.md` persona all keep working — it's
+config-only. The `AgentBackend` interface (launch binary + args + env, plus the
+instructions filename) leaves room for a future non-Claude backend (e.g. a
+standalone Codex CLI, which would need its own completion-signal source).
+
 ## Layout
 
 ```
@@ -56,6 +73,7 @@ src/
   http.ts                   optional localhost trigger webhook (POST /trigger/<botId>)
   bots/types.ts             the Bot type
   bots/registry.ts          the Bot Registry — add a bot here
+  agents/                   pluggable agent backends (claude default, kimi) + resolver
   discord/client.ts         discord.js client + ensure categories/channels on ready
   discord/handler.ts        messageCreate → router → bridge; shared-bot threads
   discord/post.ts           reply posting (chunking, select menus, file attachments)
