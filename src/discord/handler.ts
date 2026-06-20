@@ -34,6 +34,24 @@ function routingChannelName(message: Message): string | null {
 const THREAD_WELCOME = '여기 비공개 스레드에서 이어가요. 이 스레드의 대화는 본인과 봇만 볼 수 있어요.';
 
 /**
+ * Short KST timestamp for thread-name prefixes: `MM-DD HH:mm` (e.g. "06-20 14:30").
+ * Built via Intl.formatToParts so it is locale-order-independent; `hourCycle:'h23'`
+ * keeps midnight as "00", not "24".
+ */
+function threadTimestamp(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const v = (t: string): string => parts.find((p) => p.type === t)?.value ?? '';
+  return `${v('month')}-${v('day')} ${v('hour')}:${v('minute')}`;
+}
+
+/**
  * For a shared bot, resolves the PRIVATE thread this user's conversation lives
  * in, creating it if necessary, and ensures the user is a member.
  *
@@ -53,6 +71,7 @@ async function ensureUserThread(
   key: string,
   bridge: Bridge,
   customName?: string,
+  withTimestamp = false,
 ): Promise<PrivateThreadChannel | undefined> {
   const sessions = bridge.sessionStore;
 
@@ -68,7 +87,11 @@ async function ensureUserThread(
   // 2. Create a fresh private thread for this user.
   const displayName = member.displayName || member.user.username;
   const fallback = `${displayName} · ${member.user.username}`;
-  const name = (customName && customName.trim() ? customName.trim() : fallback).slice(0, 100);
+  const baseName = customName && customName.trim() ? customName.trim() : fallback;
+  // Optional KST timestamp PREFIX (bot.threadNameWithTimestamp): "MM-DD HH:mm · <name>",
+  // so a prompt-named thread becomes 날짜-시간-제목. Truncate the whole to Discord's
+  // 100-char limit — the short prefix survives, only the tail is cut.
+  const name = (withTimestamp ? `${threadTimestamp()} · ${baseName}` : baseName).slice(0, 100);
   let thread: PrivateThreadChannel;
   try {
     // We pass type: PrivateThread at runtime; the static return type widens to
@@ -147,7 +170,7 @@ async function resolveSharedReplyChannel(
   // For bots that opt in, name the thread after the user's first message (the
   // question), truncated; otherwise ensureUserThread falls back to name·username.
   const threadName = bot.threadNameFromMessage ? message.content.trim().slice(0, 90) : undefined;
-  return ensureUserThread(parent, member, key, bridge, threadName);
+  return ensureUserThread(parent, member, key, bridge, threadName, bot.threadNameWithTimestamp);
 }
 
 /**

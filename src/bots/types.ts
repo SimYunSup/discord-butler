@@ -69,6 +69,15 @@ export interface Bot {
    */
   threadNameFromMessage?: boolean;
   /**
+   * For SHARED bots: prefix each per-user thread's name with a short KST timestamp
+   * ("MM-DD HH:mm · …") at creation time, so threads can be told apart by when they
+   * were opened. With `threadNameFromMessage` this yields a 날짜-시간-제목 title.
+   * Reflects CREATION time only — a reused thread keeps its stamp until the session
+   * ends (an end command clears the cached thread, so the next message opens a
+   * fresh, freshly-stamped one).
+   */
+  threadNameWithTimestamp?: boolean;
+  /**
    * For PERSONAL bots: every message in the parent channel starts its OWN public
    * thread (anchored to the message, named from it), and the reply + any follow-ups
    * live in that thread. Each thread is an isolated conversation (key includes the

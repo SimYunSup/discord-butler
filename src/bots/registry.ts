@@ -78,6 +78,7 @@ const saju: Bot = {
   channelName: '사주',
   displayName: '사주·점성',
   shared: true,
+  threadNameWithTimestamp: true,
   category: PERSONAL_CATEGORY_NAME,
   memoryMode: 'companion',
   usage:
