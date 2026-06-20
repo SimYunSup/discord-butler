@@ -1,6 +1,7 @@
 import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Bot } from '../bots/types.js';
+import type { AgentBackend } from '../agents/types.js';
 import { readSkillContent } from './skills.js';
 
 /**
@@ -165,7 +166,8 @@ function renderSettingsJson(bot: Bot, hookScriptPath: string, eventsPath: string
 /**
  * Ensures a conversation workspace exists on disk and is fully provisioned:
  *   <conversationDir>/
- *     CLAUDE.md                 (persona + tool rules + "respond in Korean" + skills)
+ *     <instructionsFile>        (persona + tool rules + "respond in Korean" + skills;
+ *                                CLAUDE.md for the Claude-family backends)
  *     .claude/settings.json     (Stop + Notification hooks → hook-emit.mjs, allowlist)
  *     .mcp.json                 (bot.mcpServers, ${VAR}-substituted, mode 0600) — if any
  *
@@ -175,12 +177,14 @@ function renderSettingsJson(bot: Bot, hookScriptPath: string, eventsPath: string
  * @param key             conversation key
  * @param bot             owning bot definition
  * @param hookScriptPath  absolute path to scripts/hook-emit.mjs
+ * @param backend         the agent backend (decides the instructions filename)
  */
 export async function ensureWorkspace(
   dataDir: string,
   key: string,
   bot: Bot,
   hookScriptPath: string,
+  backend: AgentBackend,
 ): Promise<string> {
   const cwd = conversationDir(dataDir, key);
   const claudeDir = join(cwd, '.claude');
@@ -198,7 +202,7 @@ export async function ensureWorkspace(
     if (content) skillSections.push(content);
   }
 
-  await writeFile(join(cwd, 'CLAUDE.md'), renderClaudeMd(bot, skillSections), 'utf8');
+  await writeFile(join(cwd, backend.instructionsFile), renderClaudeMd(bot, skillSections), 'utf8');
   await writeFile(
     join(claudeDir, 'settings.json'),
     renderSettingsJson(bot, hookScriptPath, eventsPath),

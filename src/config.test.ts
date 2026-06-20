@@ -31,3 +31,28 @@ it('parses BUTLER_IDLE_TIMEOUT_MS and throws on invalid', () => {
   assert.throws(() => loadConfig({ ...base, BUTLER_IDLE_TIMEOUT_MS: '0' }));
   assert.throws(() => loadConfig({ ...base, BUTLER_IDLE_TIMEOUT_MS: 'abc' }));
 });
+
+it('defaults the agent to claude and kimi auth empty', () => {
+  const c = loadConfig({ ...base });
+  assert.equal(c.defaultAgent, 'claude');
+  assert.equal(c.kimi.authToken, '');
+  assert.equal(c.kimi.baseUrl, 'https://api.moonshot.ai/anthropic');
+});
+
+it('parses BUTLER_AGENT and KIMI_* env', () => {
+  const c = loadConfig({
+    ...base,
+    BUTLER_AGENT: 'kimi',
+    KIMI_BASE_URL: 'https://api.moonshot.cn/anthropic',
+    KIMI_AUTH_TOKEN: 'sk-x',
+    KIMI_MODEL: 'kimi-k2',
+  });
+  assert.equal(c.defaultAgent, 'kimi');
+  assert.equal(c.kimi.baseUrl, 'https://api.moonshot.cn/anthropic');
+  assert.equal(c.kimi.authToken, 'sk-x');
+  assert.equal(c.kimi.model, 'kimi-k2');
+});
+
+it('throws on an unknown BUTLER_AGENT', () => {
+  assert.throws(() => loadConfig({ ...base, BUTLER_AGENT: 'codex' }));
+});

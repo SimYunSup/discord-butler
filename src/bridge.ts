@@ -10,6 +10,7 @@ import { ensureWorkspace, eventsFile } from './claude/workspace.js';
 import { ensureTrusted } from './claude/trust.js';
 import { sanitizeKey } from './router.js';
 import { KeyedQueue } from './keyed-queue.js';
+import { resolveBackend, type AgentBackend, type AgentLaunch } from './agents/index.js';
 
 /** Absolute path to scripts/hook-emit.mjs (sibling of the repo root's scripts/). */
 function hookScriptPath(): string {
@@ -101,7 +102,7 @@ export class Bridge {
   private readonly queue = new KeyedQueue();
 
   constructor(private readonly config: ButlerConfig) {
-    this.tmux = new TmuxManager(config.tmuxBin, config.claudeBin);
+    this.tmux = new TmuxManager(config.tmuxBin);
     this.sessions = new SessionMapStore(config.dataDir);
     this.hookScript = hookScriptPath();
   }
@@ -147,11 +148,14 @@ export class Bridge {
   ): Promise<void> {
     const windowName = sanitizeKey(key);
 
+    // Resolve the agent backend for this bot (bot.agent → BUTLER_AGENT → claude).
+    const backend = resolveBackend(bot, this.config.defaultAgent);
+
     // 0. Session command: an explicit end command tears the window down (ending
     //    the conversation) without forwarding anything to claude. Windows are
     //    otherwise kept alive across turns, so this is how a user resets/closes.
     if (isEndCommand(text)) {
-      if (bot.flushOnEnd) await this.flushBeforeEnd(bot, key, windowName);
+      if (bot.flushOnEnd) await this.flushBeforeEnd(bot, key, windowName, backend);
       await this.tmux.killWindow(windowName);
       await this.sessions.remove(key);
       await cb.onReply(
@@ -162,17 +166,29 @@ export class Bridge {
       return;
     }
 
+    // Resolve how to launch the backend (binary + env). May throw if required
+    // config is missing (e.g. Kimi selected without KIMI_AUTH_TOKEN) — surface it
+    // as a clear reply rather than a silent ⚠️.
+    let launch: AgentLaunch;
+    try {
+      launch = backend.launch(this.config);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await cb.onReply(`⚠️ 에이전트 백엔드(${backend.kind}) 설정 오류로 시작할 수 없어요 (${reason}).`);
+      return;
+    }
+
     // 1. Workspace (idempotent): persona + hooks written to disk.
-    const cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript);
+    const cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript, backend);
 
     // 1b. Pre-trust the workspace in ~/.claude.json so claude doesn't block on the
     //     "Do you trust this folder?" prompt when it launches here.
     await ensureTrusted(cwd);
 
-    // 2. tmux window running claude in that cwd. If we just created it, claude is
+    // 2. tmux window running the agent in that cwd. If we just created it, claude is
     //    still booting — wait for the REPL to be idle/ready before sending, or the
     //    first message lands during startup and is dropped (never submits).
-    const created = await this.tmux.ensureWindow(windowName, cwd);
+    const created = await this.tmux.ensureWindow(windowName, cwd, launch);
     await this.sessions.upsert(key, { window: windowName, cwd });
     if (created) {
       const ready = await this.tmux.waitUntilReady(windowName);
@@ -232,11 +248,16 @@ export class Bridge {
    * before the window is killed. Any failure (no window, timeout) is logged and
    * swallowed — ending must never be blocked by a failed flush.
    */
-  private async flushBeforeEnd(bot: Bot, key: string, windowName: string): Promise<void> {
+  private async flushBeforeEnd(
+    bot: Bot,
+    key: string,
+    windowName: string,
+    backend: AgentBackend,
+  ): Promise<void> {
     if (!bot.flushOnEnd) return;
     try {
       if (!(await this.tmux.windowExists(windowName))) return;
-      const cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript);
+      const cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript, backend);
       await ensureTrusted(cwd);
       const events = eventsFile(this.config.dataDir, key);
       const noop: BridgeCallbacks = { onReply: () => {}, onNotification: () => {} };

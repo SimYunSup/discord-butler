@@ -13,6 +13,8 @@ const cfg: ButlerConfig = {
   idleTimeoutMs: 1000,
   httpPort: 0,
   triggerToken: 'secret',
+  defaultAgent: 'claude',
+  kimi: { baseUrl: 'https://api.moonshot.ai/anthropic', authToken: '', model: '' },
 };
 
 async function withServer(deps: TriggerDeps, fn: (port: number) => Promise<void>): Promise<void> {

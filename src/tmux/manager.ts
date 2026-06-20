@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { AgentLaunch } from '../agents/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,15 +40,13 @@ const WORKING_RE = /esc to interrupt|esc to cancel|\besc\b to|Thinking|Working|S
  * Drives tmux via the `tmux` CLI to manage one window per conversation.
  *
  * Layout: a single detached tmux session ("butler") whose windows are named by
- * the (sanitized) conversation key. Each window runs a `claude` instance whose
- * cwd is that conversation's working dir. The bridge injects user text via
- * `send-keys` and relies on Claude Code hooks (not pane scraping) for replies.
+ * the (sanitized) conversation key. Each window runs an agent CLI (the binary +
+ * env come from the caller's {@link AgentLaunch}) whose cwd is that
+ * conversation's working dir. The bridge injects user text via `send-keys` and
+ * relies on Claude Code hooks (not pane scraping) for replies.
  */
 export class TmuxManager {
-  constructor(
-    private readonly tmuxBin: string = 'tmux',
-    private readonly claudeBin: string = 'claude',
-  ) {}
+  constructor(private readonly tmuxBin: string = 'tmux') {}
 
   /** Runs a tmux subcommand. Resolves stdout; rejects on non-zero exit. */
   private async tmux(args: string[]): Promise<string> {
@@ -96,25 +95,32 @@ export class TmuxManager {
   }
 
   /**
-   * Ensures a window for `windowName` exists, running `claude` in `cwd`.
+   * Ensures a window for `windowName` exists, running the agent CLI in `cwd`.
    *
    * - Creates the shared butler session (detached, first window) if absent.
    * - Otherwise creates a new named window.
-   * In both cases the window's shell starts in `cwd` and launches `claude`.
+   * In both cases the window's shell starts in `cwd` and launches `spec.bin`
+   * (with `spec.args` and `spec.env` applied).
    *
    * Idempotent: if the window already exists, does nothing.
    *
    * @returns true if a new window was created, false if it already existed.
    */
-  async ensureWindow(windowName: string, cwd: string): Promise<boolean> {
+  async ensureWindow(windowName: string, cwd: string, spec: AgentLaunch): Promise<boolean> {
     if (await this.windowExists(windowName)) return false;
 
-    // The shell command the new window runs: cd into cwd, then exec claude so
-    // the claude process replaces the shell (window closes when claude exits).
-    // TODO(live): verify `claude` launches into its interactive REPL here and
+    // The shell command the new window runs: cd into cwd, then exec the agent so
+    // its process replaces the shell (window closes when the agent exits). Any
+    // backend env (e.g. Kimi's ANTHROPIC_BASE_URL) is applied via `env KEY=val`,
+    // which then execs the binary in-place.
+    // TODO(live): verify the agent launches into its interactive REPL here and
     // that the workspace's .claude/settings.json hooks load. On the server,
     // `claude /login` (subscription auth) must have been run once beforehand.
-    const launch = `cd ${shellQuote(cwd)} && exec ${shellQuote(this.claudeBin)}`;
+    const envAssignments = Object.entries(spec.env)
+      .map(([k, v]) => `${k}=${shellQuote(v)}`)
+      .join(' ');
+    const cmd = [shellQuote(spec.bin), ...spec.args.map(shellQuote)].join(' ');
+    const launch = `cd ${shellQuote(cwd)} && exec ${envAssignments ? `env ${envAssignments} ` : ''}${cmd}`;
 
     if (await this.sessionExists()) {
       await this.tmux([

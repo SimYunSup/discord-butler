@@ -1,3 +1,5 @@
+import type { AgentKind } from '../agents/types.js';
+
 /**
  * Memory model for a bot's tmux window lifecycle.
  * - `task`: stateless. A window is spun up per request and killed when the reply
@@ -36,6 +38,14 @@ export interface Bot {
   shared: boolean;
   /** Memory lifecycle for this bot's tmux windows. */
   memoryMode: MemoryMode;
+  /**
+   * Which agent backend drives this bot's tmux windows. Defaults (when unset) to
+   * the global default from `BUTLER_AGENT` (itself defaulting to `'claude'`).
+   * - `'claude'`: the Claude Code CLI.
+   * - `'kimi'`:   the same Claude Code CLI pointed at Moonshot's Anthropic-compatible
+   *               endpoint via env (requires KIMI_AUTH_TOKEN; see .env.example).
+   */
+  agent?: AgentKind;
   /**
    * Short usage guide shown as the Discord channel's TOPIC (description), so a
    * user sees how to use the bot at the top of the channel. Plain text, ~1-2

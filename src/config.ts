@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { AGENT_KINDS, DEFAULT_AGENT, isAgentKind, type AgentKind } from './agents/types.js';
 
 /**
  * Validated runtime configuration for the butler bridge.
@@ -22,6 +23,21 @@ export interface ButlerConfig {
   httpPort: number;
   /** Shared secret for the trigger webhook; if empty, the server is disabled. */
   triggerToken: string;
+  /** Default agent backend for bots that don't set their own (BUTLER_AGENT). */
+  defaultAgent: AgentKind;
+  /**
+   * Kimi (Moonshot) backend settings. Only consulted when a bot — or the global
+   * default — selects the `kimi` agent. `authToken` empty means Kimi is not
+   * configured (selecting it then fails with a clear error).
+   */
+  kimi: {
+    /** Moonshot's Anthropic-compatible base URL (ANTHROPIC_BASE_URL). */
+    baseUrl: string;
+    /** Moonshot API key (ANTHROPIC_AUTH_TOKEN). */
+    authToken: string;
+    /** Optional model id to pin (ANTHROPIC_MODEL); empty → endpoint default. */
+    model: string;
+  };
 }
 
 /** Absolute path to the repo root (one level up from src/). */
@@ -69,6 +85,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
   }
   const triggerToken = env.BUTLER_TRIGGER_TOKEN?.trim() ?? '';
 
+  const agentRaw = env.BUTLER_AGENT?.trim();
+  if (agentRaw && !isAgentKind(agentRaw)) {
+    throw new Error(`BUTLER_AGENT must be one of: ${AGENT_KINDS.join(', ')}; got "${agentRaw}".`);
+  }
+  const defaultAgent: AgentKind = agentRaw && isAgentKind(agentRaw) ? agentRaw : DEFAULT_AGENT;
+
+  const kimi = {
+    // Moonshot's documented Anthropic-compatible endpoint (override per region,
+    // e.g. https://api.moonshot.cn/anthropic). Trailing slash not required.
+    baseUrl: env.KIMI_BASE_URL?.trim() || 'https://api.moonshot.ai/anthropic',
+    authToken: env.KIMI_AUTH_TOKEN?.trim() || '',
+    model: env.KIMI_MODEL?.trim() || '',
+  };
+
   return {
     discordToken,
     dataDir,
@@ -78,5 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     idleTimeoutMs,
     httpPort,
     triggerToken,
+    defaultAgent,
+    kimi,
   };
 }
