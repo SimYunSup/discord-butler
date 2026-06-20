@@ -38,6 +38,14 @@ export interface ButlerConfig {
     /** Optional model id to pin (ANTHROPIC_MODEL); empty → endpoint default. */
     model: string;
   };
+  /**
+   * Codex backend settings. EXPERIMENTAL/UNVERIFIED (see src/agents/codex.ts).
+   * Only consulted when a bot — or the global default — selects the `codex` agent.
+   */
+  codex: {
+    /** Local clone of openai/codex-plugin-cc, loaded via `claude --plugin-dir` (CODEX_PLUGIN_DIR). */
+    pluginDir: string;
+  };
 }
 
 /** Absolute path to the repo root (one level up from src/). */
@@ -99,6 +107,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     model: env.KIMI_MODEL?.trim() || '',
   };
 
+  // EXPERIMENTAL: openai/codex-plugin-cc loaded into Claude Code (see src/agents/codex.ts).
+  const codex = {
+    pluginDir: env.CODEX_PLUGIN_DIR?.trim() || '',
+  };
+
   return {
     discordToken,
     dataDir,
@@ -110,5 +123,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     triggerToken,
     defaultAgent,
     kimi,
+    codex,
   };
 }

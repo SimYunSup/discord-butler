@@ -56,12 +56,50 @@ The agent that drives a conversation's tmux window is **pluggable** (see
 |---------|--------------|
 | `claude` *(default)* | the `claude` Claude Code CLI |
 | `kimi` | the **same** Claude Code CLI pointed at Moonshot's Anthropic-compatible endpoint via env (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) — set `KIMI_AUTH_TOKEN` (and optionally `KIMI_BASE_URL`/`KIMI_MODEL`) |
+| `codex` *(experimental)* | the **same** Claude Code CLI with [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) loaded (`--plugin-dir $CODEX_PLUGIN_DIR`) so it can delegate to Codex — **unverified**, needs a Codex plan; see [Codex](#codex) below |
 
 Because `kimi` is still Claude Code (only the model provider changes), the Stop/
 Notification hooks, folder trust, and `CLAUDE.md` persona all keep working — it's
 config-only. The `AgentBackend` interface (launch binary + args + env, plus the
-instructions filename) leaves room for a future non-Claude backend (e.g. a
-standalone Codex CLI, which would need its own completion-signal source).
+instructions filename) leaves room for a non-Claude backend.
+
+### Codex
+
+Two shapes exist for [#1](https://github.com/SimYunSup/discord-butler/issues/1)'s
+Codex support. The **plugin path** (delegate to Codex from Claude Code) is
+scaffolded as the experimental `codex` backend — see the table above and the ⚠️
+note at the end of this section. The **standalone path** (Codex itself as the
+agent) is fully mapped out but unimplemented: it can't be live-verified without a
+paid Codex plan (`codex login` needs a ChatGPT
+subscription, or an `OPENAI_API_KEY` billed per token), so per this repo's
+"no unverified code" rule it stays a documented path until a contributor with
+Codex access can implement **and** verify it. Every Claude-Code coupling point
+has a Codex equivalent:
+
+| Claude Code | Codex equivalent |
+|---|---|
+| `CLAUDE.md` persona | `AGENTS.md` (`backend.instructionsFile`) |
+| `.claude/settings.json` tool allowlist | `approval_policy` + `sandbox_mode` in a per-workspace `.codex/config.toml`; unattended ⇒ `approval_policy = "never"`, `sandbox_mode = "workspace-write"` |
+| folder trust in `~/.claude.json` (`src/claude/trust.ts`) | `[projects."<cwd>"] trust_level = "trusted"` in `config.toml` |
+| **Stop hook → events JSONL** | **`notify` program**: `notify = ["node", "codex-notify.mjs"]` fires on `agent-turn-complete` with a JSON payload carrying `last-assistant-message`. Re-emit it as the same `{"event":"Stop", …}` line the bridge already tails ⇒ **the bridge is unchanged.** (Alt: `codex exec --json` emits NDJSON `turn.completed` events for a non-interactive, per-message architecture, with `codex exec resume` keeping companion memory.) |
+
+So the open question from #1 — "completion detection without a Stop-hook
+equivalent" — is **resolved**: Codex's `notify` (`agent-turn-complete`) is a near
+1:1 analog of Claude Code's Stop hook, down to the `last-assistant-message` field.
+
+A second, lighter path **is scaffolded** as the experimental `codex` agent
+(`src/agents/codex.ts`): keep Claude Code as the driving agent (so **every**
+existing hook keeps working) and load the official
+[`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) plugin so it
+can delegate review/heavy tasks to Codex via `/codex:review` & co. Point
+`CODEX_PLUGIN_DIR` at a local clone of the plugin and set `BUTLER_AGENT=codex` (or a
+bot's `agent: 'codex'`). This is *delegation, not an engine swap* — the user still
+talks to Claude — and it rides the same Codex auth, so it needs a Codex plan.
+
+> ⚠️ **Unverified.** It can't be run end-to-end here (no Codex plan), and
+> non-interactive plugin activation via `--plugin-dir` (no `/plugin install` /
+> `/codex:setup` prompt) is unconfirmed. Treat the `codex` backend as a draft
+> scaffold, not a supported path — see the disclaimer in `src/agents/codex.ts`.
 
 ## Layout
 

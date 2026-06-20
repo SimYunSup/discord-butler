@@ -44,6 +44,9 @@ export interface Bot {
    * - `'claude'`: the Claude Code CLI.
    * - `'kimi'`:   the same Claude Code CLI pointed at Moonshot's Anthropic-compatible
    *               endpoint via env (requires KIMI_AUTH_TOKEN; see .env.example).
+   * - `'codex'`:  EXPERIMENTAL/UNVERIFIED — the same Claude Code CLI with the
+   *               openai/codex-plugin-cc plugin loaded so it can delegate to Codex
+   *               (requires CODEX_PLUGIN_DIR + a Codex plan; see src/agents/codex.ts).
    */
   agent?: AgentKind;
   /**

@@ -45,6 +45,39 @@
 - **선택 메뉴**: 봇은 답 끝에 ` ```butler-select ` 블록으로 Discord 버튼을 띄우거나,
   ` ```butler-file ` 블록으로 대화 워크스페이스의 파일을 첨부할 수 있습니다.
 
+## 에이전트 백엔드
+
+대화의 tmux 창을 구동하는 에이전트는 **교체 가능**합니다(`src/agents/` 참고). 봇마다 `agent`
+필드를 두거나, 전역 기본값을 `BUTLER_AGENT`로 지정합니다(기본 `claude`):
+
+| `agent` | 무엇을 실행하나 |
+|---------|----------------|
+| `claude` *(기본)* | `claude`(Claude Code CLI) |
+| `kimi` | **같은** Claude Code CLI를 Moonshot의 Anthropic 호환 엔드포인트로 env(`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`)만 바꿔 실행 — `KIMI_AUTH_TOKEN`(선택 `KIMI_BASE_URL`/`KIMI_MODEL`) 설정 |
+| `codex` *(실험적)* | **같은** Claude Code CLI에 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)를 로드(`--plugin-dir $CODEX_PLUGIN_DIR`)해 Codex에 위임 — **미검증**, Codex 플랜 필요. 아래 [Codex](#codex) 참고 |
+
+`kimi`는 여전히 Claude Code라(모델 제공자만 바뀜) Stop/Notification 훅·폴더 신뢰·`CLAUDE.md`
+페르소나가 전부 그대로 동작합니다 — 설정만으로 붙는 경로. `AgentBackend` 인터페이스(실행
+바이너리 + args + env, 지침 파일명)는 비-Claude 백엔드를 위한 여지를 둡니다.
+
+### Codex
+
+이슈 [#1](https://github.com/SimYunSup/discord-butler/issues/1)의 Codex 지원에는 두 갈래가
+있습니다. **플러그인 경로**(Claude Code에서 Codex로 위임)는 실험적 `codex` 백엔드로
+스캐폴드돼 있습니다(`src/agents/codex.ts`) — Claude Code가 드라이버로 남아 **모든 훅이 그대로
+동작**하고 Codex엔 리뷰/무거운 작업만 위임합니다. `CODEX_PLUGIN_DIR`을 플러그인 로컬 클론으로
+가리키고 `BUTLER_AGENT=codex`(또는 봇의 `agent: 'codex'`)로 켭니다. *엔진 교체가 아니라
+위임*이라 사용자는 여전히 Claude와 대화하며, 같은 Codex 인증을 쓰므로 Codex 플랜이 필요합니다.
+
+> ⚠️ **미검증.** 여기선 end-to-end로 돌려볼 수 없고(Codex 플랜 없음), `--plugin-dir`로의
+> 비대화 활성화(`/plugin install`·`/codex:setup` 없이)도 미확인입니다. `codex` 백엔드는 정식
+> 지원이 아니라 초안 스캐폴드로 다루세요 — `src/agents/codex.ts`의 disclaimer 참고.
+>
+> **독립 경로**(Codex 자체가 에이전트)는 설계만 돼 있고 미구현입니다. Stop 훅 등가물이 없는
+> 완료 감지는 Codex의 `notify`(`agent-turn-complete` 이벤트가 `last-assistant-message` 포함 →
+> bridge가 tail하는 `{"event":"Stop", …}` JSONL로 재방출, **bridge 무변경**) 또는
+> `codex exec --json`(NDJSON `turn.completed`)으로 풀립니다.
+
 ## 구조
 
 ```

@@ -54,5 +54,11 @@ it('parses BUTLER_AGENT and KIMI_* env', () => {
 });
 
 it('throws on an unknown BUTLER_AGENT', () => {
-  assert.throws(() => loadConfig({ ...base, BUTLER_AGENT: 'codex' }));
+  assert.throws(() => loadConfig({ ...base, BUTLER_AGENT: 'gpt' }));
+});
+
+it('accepts BUTLER_AGENT=codex and reads CODEX_PLUGIN_DIR', () => {
+  const c = loadConfig({ ...base, BUTLER_AGENT: 'codex', CODEX_PLUGIN_DIR: '/opt/codex-plugin-cc' });
+  assert.equal(c.defaultAgent, 'codex');
+  assert.equal(c.codex.pluginDir, '/opt/codex-plugin-cc');
 });

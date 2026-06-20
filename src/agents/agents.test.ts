@@ -7,6 +7,7 @@ import { getBackend, isAgentKind, resolveBackend } from './index.js';
 const config = {
   claudeBin: 'claude',
   kimi: { baseUrl: 'https://example/anthropic', authToken: '', model: '' },
+  codex: { pluginDir: '' },
 } as unknown as ButlerConfig;
 
 const bot = (agent?: Bot['agent']): Bot =>
@@ -24,7 +25,8 @@ const bot = (agent?: Bot['agent']): Bot =>
 it('isAgentKind accepts known kinds, rejects others', () => {
   assert.equal(isAgentKind('claude'), true);
   assert.equal(isAgentKind('kimi'), true);
-  assert.equal(isAgentKind('codex'), false);
+  assert.equal(isAgentKind('codex'), true);
+  assert.equal(isAgentKind('gpt'), false);
 });
 
 it('claude backend uses CLAUDE.md, the claudeBin, no extra env', () => {
@@ -62,4 +64,18 @@ it('kimi backend sets Anthropic env (and ANTHROPIC_MODEL only when a model is se
     kimi: { baseUrl: 'https://example/anthropic', authToken: 'sk-test', model: 'kimi-k2' },
   } as ButlerConfig;
   assert.equal(getBackend('kimi').launch(withModel).env.ANTHROPIC_MODEL, 'kimi-k2');
+});
+
+it('codex backend uses CLAUDE.md and throws without CODEX_PLUGIN_DIR', () => {
+  const b = getBackend('codex');
+  assert.equal(b.instructionsFile, 'CLAUDE.md');
+  assert.throws(() => b.launch(config), /CODEX_PLUGIN_DIR/);
+});
+
+it('codex backend loads the plugin via --plugin-dir when CODEX_PLUGIN_DIR is set', () => {
+  const withPlugin = { ...config, codex: { pluginDir: '/opt/codex-plugin-cc' } } as ButlerConfig;
+  const launch = getBackend('codex').launch(withPlugin);
+  assert.equal(launch.bin, 'claude');
+  assert.deepEqual(launch.args, ['--plugin-dir', '/opt/codex-plugin-cc']);
+  assert.deepEqual(launch.env, {});
 });

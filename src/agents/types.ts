@@ -6,14 +6,17 @@ import type { ButlerConfig } from '../config.js';
  * - `claude`: the default — the `claude` Claude Code CLI.
  * - `kimi`:   the SAME Claude Code CLI pointed at Moonshot's Anthropic-compatible
  *             endpoint via env (config-only; see {@link ./kimi.ts}).
+ * - `codex`:  EXPERIMENTAL — the SAME Claude Code CLI with the openai/codex-plugin-cc
+ *             plugin loaded so it can delegate to Codex (see {@link ./codex.ts}).
  *
- * A future non-Claude backend (e.g. a standalone Codex CLI) would add a kind here
- * and a matching {@link AgentBackend} implementation.
+ * A standalone (non-Claude) Codex CLI backend — where Codex itself is the agent —
+ * would add another kind plus its own completion-signal source (Codex `notify` /
+ * `exec --json`); see the README "Agent backends → Codex".
  */
-export type AgentKind = 'claude' | 'kimi';
+export type AgentKind = 'claude' | 'kimi' | 'codex';
 
 /** All known backend kinds (used to validate env/registry input). */
-export const AGENT_KINDS: readonly AgentKind[] = ['claude', 'kimi'];
+export const AGENT_KINDS: readonly AgentKind[] = ['claude', 'kimi', 'codex'];
 
 /** Default backend when a bot doesn't specify one and no global override is set. */
 export const DEFAULT_AGENT: AgentKind = 'claude';
