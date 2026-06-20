@@ -1,3 +1,4 @@
+import type { SendableChannels } from 'discord.js';
 import { loadConfig } from './config.js';
 import { createClient, initClient } from './discord/client.js';
 import { registerHandler } from './discord/handler.js';
@@ -5,6 +6,10 @@ import { findTextChannelByName, postReply } from './discord/post.js';
 import { Bridge } from './bridge.js';
 import { startTriggerServer } from './http.js';
 import { conversationKey } from './router.js';
+import { startReaper } from './reaper.js';
+import { TmuxManager } from './tmux/manager.js';
+import { bots } from './bots/registry.js';
+import type { SessionEntry } from './persistence/session-map.js';
 
 /**
  * Entry point: wire config → Discord client → handler → bridge, then log in.
@@ -49,12 +54,40 @@ async function main(): Promise<void> {
     },
   });
 
+  // Idle reaper: every 30 min, kill any conversation window idle ≥ 5h, post a
+  // heads-up in its channel/thread, and drop its session entry — so an abandoned
+  // (or wedged) window can't linger silently. Cutoff/interval overridable via env.
+  const reaperStop = startReaper({
+    sessions: bridge.sessionStore,
+    tmux: new TmuxManager(config.tmuxBin),
+    maxIdleMs: Number(process.env.BUTLER_REAP_IDLE_MS) || undefined,
+    intervalMs: Number(process.env.BUTLER_REAP_INTERVAL_MS) || undefined,
+    notify: async (key: string, entry: SessionEntry): Promise<void> => {
+      // Resolve where this conversation lives: an explicit thread (shared bots), a
+      // thread id embedded in the key (threadPerMessage), or the bot's channel.
+      const botId = key.split('__')[0] ?? key;
+      const bot = bots.find((b) => b.id === botId);
+      const threadId = entry.threadId ?? key.match(/__thread_(\d+)/)?.[1];
+      let channel: SendableChannels | undefined;
+      if (threadId) {
+        const ch = await client.channels.fetch(threadId).catch(() => null);
+        if (ch && ch.isTextBased() && 'send' in ch) channel = ch as SendableChannels;
+      }
+      if (!channel && bot) channel = findTextChannelByName(client, bot.channelName);
+      if (!channel) return;
+      await channel
+        .send({ content: '🧹 이 대화가 5시간 넘게 멈춰 있어 세션을 정리했어요. 다음 메시지부터 새 대화로 시작합니다.' })
+        .catch((err) => console.warn(`[reaper] notify failed (${key}):`, err));
+    },
+  });
+
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[butler] received ${signal}, shutting down (claude 창은 유지)…`);
     try {
+      reaperStop();
       triggerServer?.close();
       await client.destroy();
     } catch (err) {
