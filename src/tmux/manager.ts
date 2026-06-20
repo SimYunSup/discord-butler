@@ -36,6 +36,29 @@ const TRUST_RE = /trust the files|do you trust/i;
 // Shown while claude is actively processing a turn (so the message was submitted).
 const WORKING_RE = /esc to interrupt|esc to cancel|\besc\b to|Thinking|Working|Synthesi|tokens|✶|✳|·\s*$/i;
 
+/** First line of the message, trimmed + sliced — a stable signature to find in the pane. */
+export function inputProbe(text: string): string {
+  return (text.split('\n', 1)[0] ?? '').trim().slice(0, 20);
+}
+
+/** Whether the captured pane currently shows the probe (the message typed or echoed). */
+export function paneShowsProbe(pane: string, probe: string): boolean {
+  return probe.length > 0 && pane.includes(probe);
+}
+
+/**
+ * Decides what the submit-confirmation loop should do next, given the current pane:
+ * - `'done'`   → claude is processing (the turn started) — stop.
+ * - `'enter'`  → the message is in the input box but unsubmitted — just press Enter.
+ * - `'retype'` → the box is empty (a freshly-launched REPL dropped the paste) —
+ *                re-type the WHOLE message before pressing Enter (re-pressing Enter
+ *                alone can't submit an empty box → the turn never starts → idle timeout).
+ */
+export function nextSendAction(pane: string, probe: string): 'done' | 'enter' | 'retype' {
+  if (WORKING_RE.test(pane)) return 'done';
+  return paneShowsProbe(pane, probe) ? 'enter' : 'retype';
+}
+
 /**
  * Drives tmux via the `tmux` CLI to manage one window per conversation.
  *
@@ -185,35 +208,39 @@ export class TmuxManager {
   /**
    * Sends a line of user text to the conversation's claude REPL, then Enter.
    *
-   * We send the text and the Enter keypress as two separate `send-keys` calls so
-   * that the literal text (which may itself contain characters tmux would
-   * interpret as key names) is delivered with `-l` (literal), and Enter is sent
-   * as the named key.
+   * Text and Enter are two separate `send-keys` calls so the literal text (which may
+   * contain characters tmux would read as key names) goes with `-l`, and Enter as the
+   * named key.
    *
-   * After the Enter we CONFIRM submission: a busy or just-woken TUI sometimes
-   * drops the Enter, leaving the text sitting unsubmitted in the input box (claude
-   * stays idle → no Stop → timeout). If we don't see the "working" indicator
-   * shortly after, we re-send Enter (a few attempts). An extra Enter on an
-   * already-submitted/idle prompt is harmless (claude ignores an empty submit).
+   * Then we CONFIRM submission AND recover a dropped paste: a freshly-launched REPL may
+   * not be accepting input yet, so the literal text can be dropped ENTIRELY — an empty
+   * box with nothing for Enter to submit, so the turn never starts and the bridge
+   * idle-times-out. So each confirm step checks the pane (see {@link nextSendAction}):
+   * if claude is processing we're done; if the message is in the box we just press
+   * Enter; if the box is empty we RE-TYPE the whole message before pressing Enter.
    *
    * @param windowName target window
    * @param text       the user's message (single logical submission)
    */
   async sendText(windowName: string, text: string): Promise<void> {
     const target = `${BUTLER_SESSION}:${windowName}`;
-    // -l sends the buffer literally (no key-name interpretation).
+    const probe = inputProbe(text);
+    // -l sends the buffer literally; the scaled wait lets the TUI ingest the paste
+    // before Enter (else the Enter is dropped and the turn never submits).
     await this.tmux(['send-keys', '-t', target, '-l', text]);
-    // Wait (scaled to text length) before Enter so the TUI finishes ingesting
-    // the paste — otherwise the Enter is dropped and the turn never submits.
     await delay(submitDelayMs(text));
     await this.tmux(['send-keys', '-t', target, 'Enter']);
 
-    // Submit confirmation: poll for the working indicator; if absent, the Enter
-    // didn't take — nudge it again. Bounded so we never block the turn.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await delay(700);
-      const pane = await this.capturePane(windowName);
-      if (WORKING_RE.test(pane)) return; // claude is processing → submitted.
+    // Bounded confirm/recover loop, so we never block the turn indefinitely.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await delay(800);
+      const action = nextSendAction(await this.capturePane(windowName), probe);
+      if (action === 'done') return; // claude is processing → submitted.
+      if (action === 'retype') {
+        // The paste was dropped (empty box) — re-type the whole message.
+        await this.tmux(['send-keys', '-t', target, '-l', text]);
+        await delay(submitDelayMs(text));
+      }
       await this.tmux(['send-keys', '-t', target, 'Enter']);
     }
   }
