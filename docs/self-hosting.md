@@ -15,6 +15,46 @@ discord-butler는 가볍습니다 — **DB가 없고**(상태는 Markdown 파일
 
 ---
 
+## 0. Quick start — one command / 원커맨드 빠른 설치
+
+**EN.** Once you're on a Linux box or a Mac mini with an OS installed, the whole
+software side (prerequisites → clone → install → build → 24/7 service) is one
+command. It installs Node 20 + pnpm + tmux + git + the `claude` CLI, sets up the
+repo, writes `.env`, and registers a systemd (Linux) / launchd (macOS) service:
+
+```bash
+# interactive — keeps a TTY so it can prompt for your Discord token
+bash <(curl -fsSL https://raw.githubusercontent.com/SimYunSup/discord-butler/main/scripts/install.sh)
+
+# or fully unattended — pass the secrets up front
+DISCORD_TOKEN=xxx ANTHROPIC_API_KEY=sk-... \
+  bash <(curl -fsSL https://raw.githubusercontent.com/SimYunSup/discord-butler/main/scripts/install.sh)
+```
+
+**Two steps can't be automated** (they're inherently human), so a *zero-input*
+one-command install isn't possible:
+
+1. **Create the Discord app + token** in the Developer Portal and enable Message
+   Content Intent / invite the bot (§5) — you paste the token into the prompt.
+2. **Log in to `claude` once** (interactive OAuth, §4) — *unless* you pass
+   `ANTHROPIC_API_KEY`, which skips the login entirely.
+
+Steps 1–10 below are the same process done by hand, with the hardware/OS context.
+Use them if you want to understand or customize what the script does.
+
+**KO.** Linux 박스나 OS가 깔린 Mac mini만 준비되면, 소프트웨어 쪽(필수구성요소 → 클론 →
+설치 → 빌드 → 상시구동 서비스)은 **명령 한 줄**입니다. Node 20·pnpm·tmux·git·`claude` CLI를
+설치하고, 레포를 받고, `.env`를 만들고, systemd(Linux)/launchd(macOS) 서비스까지 등록합니다.
+다만 **두 단계는 사람만 가능**해서 완전 무입력 원커맨드는 불가능합니다 — (1) Discord 포털에서
+앱·토큰 생성 + Message Content Intent/초대(§5, 토큰은 프롬프트에 붙여넣기), (2) `claude` 최초
+로그인(§4, `ANTHROPIC_API_KEY`를 넘기면 생략 가능). 아래 1~10단계는 같은 과정을 손으로 하는
+버전이며, 동작을 이해·커스터마이즈하려면 참고하세요.
+
+> The script is idempotent — re-running reuses an existing repo/`.env`/service.
+> 스크립트는 멱등 — 재실행해도 기존 레포/`.env`/서비스를 덮어쓰지 않고 재사용합니다.
+
+---
+
 ## 1. Buy the mini PC — RAM & SSD / 미니PC 구매 — 램·SSD
 
 **EN.** This workload is **memory- and I/O-bound, not CPU-bound** — it mostly waits
@@ -99,10 +139,23 @@ node -v && pnpm -v && tmux -V && claude --version
 
 ---
 
-## 4. Authenticate `claude` (once) / `claude` 인증 (1회)
+## 4. Get an LLM plan, then authenticate `claude` (once) / LLM 구독·키 준비 후 `claude` 인증 (1회)
 
-**EN.** The bridge launches `claude` non-interactively, so it must already be logged
-in. Run it once and complete the login (Claude subscription, or set an API key):
+**EN — pick how you'll pay for the model first.** The default `claude` backend needs
+an Anthropic login of some kind. If you're starting from zero, choose one:
+
+- **Claude subscription (Pro/Max)** — sign up at [claude.ai](https://claude.ai), then
+  log in via the CLI (below). Simplest for personal/always-on use; flat monthly cost.
+- **Anthropic API key (pay-as-you-go)** — create a key at
+  [console.anthropic.com](https://console.anthropic.com) → API Keys, add billing, and
+  set `ANTHROPIC_API_KEY` instead of logging in. Best if you'd rather pay per token.
+- **No Anthropic account at all?** Use a different backend instead of `claude`: set
+  `BUTLER_AGENT=kimi` with a **Moonshot** key (`KIMI_AUTH_TOKEN`) — see *Agent
+  backends* in the [README](../README.md). (A `codex` backend exists but is
+  experimental and needs a paid Codex plan.)
+
+Then make the chosen credential available to the bridge. The bridge launches `claude`
+non-interactively, so it must already be logged in (or have an API key in its env):
 
 ```bash
 claude            # follow the login prompt, then /exit
@@ -113,8 +166,20 @@ claude            # follow the login prompt, then /exit
 On a headless server the login flow prints a URL — open it on any device, approve,
 and paste the code back. Auth is stored on disk, so it survives reboots.
 
-**KO.** 브리지는 `claude`를 비대화형으로 띄우므로 **미리 로그인**돼 있어야 합니다. 한 번
-실행해 로그인을 마치세요(Claude 구독 로그인 또는 API 키 설정):
+**KO — 먼저 모델 비용을 어떻게 낼지 정하세요.** 기본 `claude` 백엔드는 Anthropic 인증이
+필요합니다. 처음 시작한다면 셋 중 하나:
+
+- **Claude 구독(Pro/Max)** — [claude.ai](https://claude.ai)에서 가입 후 아래 CLI로 로그인.
+  개인·상시구동에 가장 간단(월 정액).
+- **Anthropic API 키(종량제)** — [console.anthropic.com](https://console.anthropic.com) →
+  API Keys에서 키 발급 + 결제 등록 후, 로그인 대신 `ANTHROPIC_API_KEY` 설정. 토큰 단위
+  과금을 원하면 이쪽.
+- **Anthropic 계정이 아예 없다면?** `claude` 대신 다른 백엔드 사용 — `BUTLER_AGENT=kimi` +
+  **Moonshot** 키(`KIMI_AUTH_TOKEN`). [README](../README.md)의 *Agent backends* 참고.
+  (`codex` 백엔드도 있으나 실험적이며 유료 Codex 플랜 필요.)
+
+그다음 고른 자격증명을 브리지가 쓰게 하세요. 브리지는 `claude`를 비대화형으로 띄우므로
+**미리 로그인**돼 있어야 합니다(또는 env에 API 키):
 
 ```bash
 claude            # 로그인 안내를 따르고 /exit
