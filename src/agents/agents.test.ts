@@ -7,6 +7,7 @@ import { getBackend, isAgentKind, resolveBackend } from './index.js';
 const config = {
   claudeBin: 'claude',
   kimi: { baseUrl: 'https://example/anthropic', authToken: '', model: '' },
+  glm: { baseUrl: 'https://example/anthropic', authToken: '', model: '' },
   codex: { pluginDir: '' },
 } as unknown as ButlerConfig;
 
@@ -25,6 +26,7 @@ const bot = (agent?: Bot['agent']): Bot =>
 it('isAgentKind accepts known kinds, rejects others', () => {
   assert.equal(isAgentKind('claude'), true);
   assert.equal(isAgentKind('kimi'), true);
+  assert.equal(isAgentKind('glm'), true);
   assert.equal(isAgentKind('codex'), true);
   assert.equal(isAgentKind('gpt'), false);
 });
@@ -64,6 +66,28 @@ it('kimi backend sets Anthropic env (and ANTHROPIC_MODEL only when a model is se
     kimi: { baseUrl: 'https://example/anthropic', authToken: 'sk-test', model: 'kimi-k2' },
   } as ButlerConfig;
   assert.equal(getBackend('kimi').launch(withModel).env.ANTHROPIC_MODEL, 'kimi-k2');
+});
+
+it('glm backend throws a clear error when GLM_AUTH_TOKEN is missing', () => {
+  assert.throws(() => getBackend('glm').launch(config), /GLM_AUTH_TOKEN/);
+});
+
+it('glm backend sets Anthropic env (and ANTHROPIC_MODEL only when a model is set)', () => {
+  const withToken = {
+    ...config,
+    glm: { baseUrl: 'https://api.z.ai/api/anthropic', authToken: 'sk-test', model: '' },
+  } as ButlerConfig;
+  const launch = getBackend('glm').launch(withToken);
+  assert.equal(launch.bin, 'claude');
+  assert.equal(launch.env.ANTHROPIC_BASE_URL, 'https://api.z.ai/api/anthropic');
+  assert.equal(launch.env.ANTHROPIC_AUTH_TOKEN, 'sk-test');
+  assert.equal('ANTHROPIC_MODEL' in launch.env, false);
+
+  const withModel = {
+    ...config,
+    glm: { baseUrl: 'https://api.z.ai/api/anthropic', authToken: 'sk-test', model: 'glm-4.7' },
+  } as ButlerConfig;
+  assert.equal(getBackend('glm').launch(withModel).env.ANTHROPIC_MODEL, 'glm-4.7');
 });
 
 it('codex backend uses CLAUDE.md and throws without CODEX_PLUGIN_DIR', () => {

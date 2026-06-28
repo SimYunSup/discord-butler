@@ -52,16 +52,17 @@ The agent that drives a conversation's tmux window is **pluggable** (see
 `src/agents/`). Each bot can set an `agent` field, or a global default is set via
 `BUTLER_AGENT` (default `claude`):
 
-| `agent` | What it runs |
-|---------|--------------|
-| `claude` *(default)* | the `claude` Claude Code CLI |
-| `kimi` | the **same** Claude Code CLI pointed at Moonshot's Anthropic-compatible endpoint via env (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) — set `KIMI_AUTH_TOKEN` (and optionally `KIMI_BASE_URL`/`KIMI_MODEL`) |
-| `codex` *(experimental)* | the **same** Claude Code CLI with [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) loaded (`--plugin-dir $CODEX_PLUGIN_DIR`) so it can delegate to Codex — **unverified**, needs a Codex plan; see [Codex](#codex) below |
+| `agent` | What it runs | Pricing |
+|---------|--------------|---------|
+| `claude` *(default)* | the `claude` Claude Code CLI | [Anthropic pricing](https://www.anthropic.com/pricing) |
+| `kimi` | the **same** Claude Code CLI pointed at Moonshot's Anthropic-compatible endpoint via env (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) — set `KIMI_AUTH_TOKEN` (and optionally `KIMI_BASE_URL`/`KIMI_MODEL`) | [Moonshot pricing](https://platform.moonshot.ai/) |
+| `glm` | the **same** Claude Code CLI pointed at [Z.ai](https://z.ai)'s Anthropic-compatible endpoint via env (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) — set `GLM_AUTH_TOKEN` (and optionally `GLM_BASE_URL`/`GLM_MODEL`; default base `https://api.z.ai/api/anthropic`, China override `https://open.bigmodel.cn/api/anthropic`) | [GLM Coding Plan pricing](https://z.ai/subscribe) |
+| `codex` *(experimental)* | the **same** Claude Code CLI with [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) loaded (`--plugin-dir $CODEX_PLUGIN_DIR`) so it can delegate to Codex — **unverified**, needs a Codex plan; see [Codex](#codex) below | [OpenAI pricing](https://openai.com/chatgpt/pricing/) |
 
-Because `kimi` is still Claude Code (only the model provider changes), the Stop/
-Notification hooks, folder trust, and `CLAUDE.md` persona all keep working — it's
-config-only. The `AgentBackend` interface (launch binary + args + env, plus the
-instructions filename) leaves room for a non-Claude backend.
+Because `kimi` and `glm` are still Claude Code (only the model provider changes),
+the Stop/Notification hooks, folder trust, and `CLAUDE.md` persona all keep
+working — both are config-only. The `AgentBackend` interface (launch binary +
+args + env, plus the instructions filename) leaves room for a non-Claude backend.
 
 ### Codex
 
@@ -111,7 +112,7 @@ src/
   http.ts                   optional localhost trigger webhook (POST /trigger/<botId>)
   bots/types.ts             the Bot type
   bots/registry.ts          the Bot Registry — add a bot here
-  agents/                   pluggable agent backends (claude default, kimi) + resolver
+  agents/                   pluggable agent backends (claude default, kimi, glm) + resolver
   discord/client.ts         discord.js client + ensure categories/channels on ready
   discord/handler.ts        messageCreate → router → bridge; shared-bot threads
   discord/post.ts           reply posting (chunking, select menus, file attachments)

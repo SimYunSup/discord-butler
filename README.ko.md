@@ -50,14 +50,15 @@
 대화의 tmux 창을 구동하는 에이전트는 **교체 가능**합니다(`src/agents/` 참고). 봇마다 `agent`
 필드를 두거나, 전역 기본값을 `BUTLER_AGENT`로 지정합니다(기본 `claude`):
 
-| `agent` | 무엇을 실행하나 |
-|---------|----------------|
-| `claude` *(기본)* | `claude`(Claude Code CLI) |
-| `kimi` | **같은** Claude Code CLI를 Moonshot의 Anthropic 호환 엔드포인트로 env(`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`)만 바꿔 실행 — `KIMI_AUTH_TOKEN`(선택 `KIMI_BASE_URL`/`KIMI_MODEL`) 설정 |
-| `codex` *(실험적)* | **같은** Claude Code CLI에 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)를 로드(`--plugin-dir $CODEX_PLUGIN_DIR`)해 Codex에 위임 — **미검증**, Codex 플랜 필요. 아래 [Codex](#codex) 참고 |
+| `agent` | 무엇을 실행하나 | 가격 |
+|---------|----------------|------|
+| `claude` *(기본)* | `claude`(Claude Code CLI) | [Anthropic 가격](https://www.anthropic.com/pricing) |
+| `kimi` | **같은** Claude Code CLI를 Moonshot의 Anthropic 호환 엔드포인트로 env(`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`)만 바꿔 실행 — `KIMI_AUTH_TOKEN`(선택 `KIMI_BASE_URL`/`KIMI_MODEL`) 설정 | [Moonshot 가격](https://platform.moonshot.ai/) |
+| `glm` | **같은** Claude Code CLI를 [Z.ai](https://z.ai)의 Anthropic 호환 엔드포인트로 env(`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`)만 바꿔 실행 — `GLM_AUTH_TOKEN`(선택 `GLM_BASE_URL`/`GLM_MODEL`; 기본 base `https://api.z.ai/api/anthropic`, 중국 `https://open.bigmodel.cn/api/anthropic`) 설정 | [GLM Coding Plan 가격](https://z.ai/subscribe) |
+| `codex` *(실험적)* | **같은** Claude Code CLI에 [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)를 로드(`--plugin-dir $CODEX_PLUGIN_DIR`)해 Codex에 위임 — **미검증**, Codex 플랜 필요. 아래 [Codex](#codex) 참고 | [OpenAI 가격](https://openai.com/chatgpt/pricing/) |
 
-`kimi`는 여전히 Claude Code라(모델 제공자만 바뀜) Stop/Notification 훅·폴더 신뢰·`CLAUDE.md`
-페르소나가 전부 그대로 동작합니다 — 설정만으로 붙는 경로. `AgentBackend` 인터페이스(실행
+`kimi`·`glm`은 여전히 Claude Code라(모델 제공자만 바뀜) Stop/Notification 훅·폴더 신뢰·`CLAUDE.md`
+페르소나가 전부 그대로 동작합니다 — 둘 다 설정만으로 붙는 경로. `AgentBackend` 인터페이스(실행
 바이너리 + args + env, 지침 파일명)는 비-Claude 백엔드를 위한 여지를 둡니다.
 
 ### Codex

@@ -146,13 +146,20 @@ an Anthropic login of some kind. If you're starting from zero, choose one:
 
 - **Claude subscription (Pro/Max)** — sign up at [claude.ai](https://claude.ai), then
   log in via the CLI (below). Simplest for personal/always-on use; flat monthly cost.
+  Pricing: [anthropic.com/pricing](https://www.anthropic.com/pricing).
 - **Anthropic API key (pay-as-you-go)** — create a key at
   [console.anthropic.com](https://console.anthropic.com) → API Keys, add billing, and
   set `ANTHROPIC_API_KEY` instead of logging in. Best if you'd rather pay per token.
-- **No Anthropic account at all?** Use a different backend instead of `claude`: set
-  `BUTLER_AGENT=kimi` with a **Moonshot** key (`KIMI_AUTH_TOKEN`) — see *Agent
-  backends* in the [README](../README.md). (A `codex` backend exists but is
-  experimental and needs a paid Codex plan.)
+  Pricing: [anthropic.com/pricing](https://www.anthropic.com/pricing).
+- **No Anthropic account at all?** Use a different backend instead of `claude` — both
+  run the same Claude Code CLI against an Anthropic-compatible endpoint (see *Agent
+  backends* in the [README](../README.md)):
+  - `BUTLER_AGENT=glm` with a **Z.ai** key (`GLM_AUTH_TOKEN`) — the GLM Coding Plan
+    starts at ~$3/mo: [z.ai/subscribe](https://z.ai/subscribe).
+  - `BUTLER_AGENT=kimi` with a **Moonshot** key (`KIMI_AUTH_TOKEN`) — pay-as-you-go:
+    [Moonshot pricing](https://platform.moonshot.ai/).
+  - (A `codex` backend also exists but is experimental and needs a paid
+    [Codex/ChatGPT plan](https://openai.com/chatgpt/pricing/).)
 
 Then make the chosen credential available to the bridge. The bridge launches `claude`
 non-interactively, so it must already be logged in (or have an API key in its env):
@@ -170,13 +177,17 @@ and paste the code back. Auth is stored on disk, so it survives reboots.
 필요합니다. 처음 시작한다면 셋 중 하나:
 
 - **Claude 구독(Pro/Max)** — [claude.ai](https://claude.ai)에서 가입 후 아래 CLI로 로그인.
-  개인·상시구동에 가장 간단(월 정액).
+  개인·상시구동에 가장 간단(월 정액). 가격: [anthropic.com/pricing](https://www.anthropic.com/pricing).
 - **Anthropic API 키(종량제)** — [console.anthropic.com](https://console.anthropic.com) →
   API Keys에서 키 발급 + 결제 등록 후, 로그인 대신 `ANTHROPIC_API_KEY` 설정. 토큰 단위
-  과금을 원하면 이쪽.
-- **Anthropic 계정이 아예 없다면?** `claude` 대신 다른 백엔드 사용 — `BUTLER_AGENT=kimi` +
-  **Moonshot** 키(`KIMI_AUTH_TOKEN`). [README](../README.md)의 *Agent backends* 참고.
-  (`codex` 백엔드도 있으나 실험적이며 유료 Codex 플랜 필요.)
+  과금을 원하면 이쪽. 가격: [anthropic.com/pricing](https://www.anthropic.com/pricing).
+- **Anthropic 계정이 아예 없다면?** `claude` 대신 다른 백엔드 사용 — 둘 다 같은 Claude Code
+  CLI를 Anthropic 호환 엔드포인트로 돌립니다([README](../README.md)의 *Agent backends* 참고):
+  - `BUTLER_AGENT=glm` + **Z.ai** 키(`GLM_AUTH_TOKEN`) — GLM Coding Plan 월 ~$3부터:
+    [z.ai/subscribe](https://z.ai/subscribe).
+  - `BUTLER_AGENT=kimi` + **Moonshot** 키(`KIMI_AUTH_TOKEN`) — 종량제:
+    [Moonshot 가격](https://platform.moonshot.ai/).
+  - (`codex` 백엔드도 있으나 실험적이며 유료 [Codex/ChatGPT 플랜](https://openai.com/chatgpt/pricing/) 필요.)
 
 그다음 고른 자격증명을 브리지가 쓰게 하세요. 브리지는 `claude`를 비대화형으로 띄우므로
 **미리 로그인**돼 있어야 합니다(또는 env에 API 키):

@@ -10,7 +10,8 @@ import { ensureWorkspace, eventsFile } from './claude/workspace.js';
 import { ensureTrusted } from './claude/trust.js';
 import { sanitizeKey } from './router.js';
 import { KeyedQueue } from './keyed-queue.js';
-import { resolveBackend, type AgentBackend, type AgentLaunch } from './agents/index.js';
+import { getBackend, resolveBackend, type AgentBackend, type AgentLaunch } from './agents/index.js';
+import type { AgentKind } from './agents/types.js';
 
 /** Absolute path to scripts/hook-emit.mjs (sibling of the repo root's scripts/). */
 function hookScriptPath(): string {
@@ -148,14 +149,12 @@ export class Bridge {
   ): Promise<void> {
     const windowName = sanitizeKey(key);
 
-    // Resolve the agent backend for this bot (bot.agent → BUTLER_AGENT → claude).
-    const backend = resolveBackend(bot, this.config.defaultAgent);
-
     // 0. Session command: an explicit end command tears the window down (ending
     //    the conversation) without forwarding anything to claude. Windows are
     //    otherwise kept alive across turns, so this is how a user resets/closes.
     if (isEndCommand(text)) {
-      if (bot.flushOnEnd) await this.flushBeforeEnd(bot, key, windowName, backend);
+      const primaryBackend = resolveBackend(bot, this.config.defaultAgent);
+      if (bot.flushOnEnd) await this.flushBeforeEnd(bot, key, windowName, primaryBackend);
       await this.tmux.killWindow(windowName);
       await this.sessions.remove(key);
       await cb.onReply(
@@ -166,79 +165,93 @@ export class Bridge {
       return;
     }
 
-    // Resolve how to launch the backend (binary + env). May throw if required
-    // config is missing (e.g. Kimi selected without KIMI_AUTH_TOKEN) — surface it
-    // as a clear reply rather than a silent ⚠️.
-    let launch: AgentLaunch;
+    // 1. Build the engine chain: [primary, ...fallbacks] with duplicates removed.
+    const primaryKind: AgentKind = bot.agent ?? this.config.defaultAgent;
+    const engines: AgentKind[] = [
+      primaryKind,
+      ...this.config.fallbackAgents.filter((kind) => kind !== primaryKind),
+    ];
+
+    // 2. Workspace (once, idempotent): persona + hooks written to disk. The current
+    // Claude-family backends use the same workspace format.
+    const primaryBackend = getBackend(primaryKind);
+    let cwd: string;
     try {
-      launch = backend.launch(this.config);
+      cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript, primaryBackend);
+      await ensureTrusted(cwd);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await cb.onReply(`⚠️ 에이전트 백엔드(${backend.kind}) 설정 오류로 시작할 수 없어요 (${reason}).`);
+      await cb.onReply(`⚠️ 워크스페이스 초기화에 실패했어요 (${reason}).`);
       return;
     }
 
-    // 1. Workspace (idempotent): persona + hooks written to disk.
-    const cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript, backend);
-
-    // 1b. Pre-trust the workspace in ~/.claude.json so claude doesn't block on the
-    //     "Do you trust this folder?" prompt when it launches here.
-    await ensureTrusted(cwd);
-
-    // 2. tmux window running the agent in that cwd. If we just created it, claude is
-    //    still booting — wait for the REPL to be idle/ready before sending, or the
-    //    first message lands during startup and is dropped (never submits).
-    const created = await this.tmux.ensureWindow(windowName, cwd, launch);
-    await this.sessions.upsert(key, { window: windowName, cwd });
-    if (created) {
-      const ready = await this.tmux.waitUntilReady(windowName);
-      if (!ready) {
-        console.warn(`[bridge] claude REPL not ready in "${windowName}" within timeout; sending anyway.`);
-      }
-    }
-
-    const events = eventsFile(this.config.dataDir, key);
-
-    // 2b. Stage any uploaded attachments into the workspace so claude can Read
-    //     them, and build a note listing their local paths.
+    // 3. Stage any uploaded attachments into the workspace once so every fallback
+    //    engine sees the same local files.
     const attachNote = await this.stageAttachments(cwd, attachments);
     const base = text || (attachments.length ? '첨부한 파일을 확인해줘.' : '');
     const fullText = (base + attachNote).trim();
-    if (!fullText) return; // nothing to send
+    if (!fullText) return;
 
-    // 3. Start watching for the *next* Stop event BEFORE sending input, so we
-    //    don't miss a fast reply. We seek to the current end of the events file
-    //    and only consider events appended after this point.
-    const waitForStop = this.awaitNextStop(events, cb);
+    // 4. Try each engine in order. On timeout/error, kill the window and start the
+    //    next engine fresh. Config errors skip to the next fallback.
+    for (let i = 0; i < engines.length; i++) {
+      const engineKind = engines[i]!;
+      const backend = getBackend(engineKind);
 
-    // 4. Inject the user's text.
-    await this.tmux.sendText(windowName, fullText);
+      let launch: AgentLaunch;
+      try {
+        launch = backend.launch(this.config);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        if (i === engines.length - 1) {
+          await cb.onReply(
+            `⚠️ 에이전트 백엔드(${engineKind}) 설정 오류로 시작할 수 없어요 (${reason}).`,
+          );
+          return;
+        }
+        continue;
+      }
 
-    // 5. Resolve with the final assistant message (or time out).
-    let replyText: string;
-    try {
-      replyText = await waitForStop;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await cb.onReply(`⌛ 응답을 기다리는 동안 시간이 초과되었거나 오류가 발생했어요 (${reason}).`);
-      return;
-    }
+      if (i > 0) {
+        await cb.onReply(`⚙️ ${engineKind}입니다.`);
+      }
 
-    await this.sessions.touch(key);
-    // Resolve any ```butler-file attachments (paths under the conversation cwd),
-    // strip the block, and deliver text + files.
-    const { cleaned, files } = await this.extractOutgoingFiles(replyText, cwd);
-    await cb.onReply(cleaned, files.length ? files : undefined);
+      try {
+        const created = await this.tmux.ensureWindow(windowName, cwd, launch);
+        await this.sessions.upsert(key, { window: windowName, cwd });
+        if (created) {
+          const ready = await this.tmux.waitUntilReady(windowName);
+          if (!ready) {
+            console.warn(
+              `[bridge] agent REPL not ready in "${windowName}" within timeout; sending anyway.`,
+            );
+          }
+        }
 
-    // Windows are KEPT ALIVE across turns (all bots): conversation context
-    // persists and we avoid a cold start (and its submit race) on every message.
-    // A user ends a session explicitly via an end command (see step 0). Context
-    // growth is bounded by Claude Code's own /compact and by ending the session.
-    //
-    // Companion-mode bots additionally checkpoint a rolling summary into
-    // memory.md on a fixed turn cadence, so the gist survives a later reset.
-    if (bot.memoryMode === 'companion') {
-      await this.maybeRefreshCompanionMemory(key, windowName);
+        const events = eventsFile(this.config.dataDir, key);
+        const waitForStop = this.awaitNextStop(events, cb);
+        await this.tmux.sendText(windowName, fullText);
+        const replyText = await waitForStop;
+
+        await this.sessions.touch(key);
+        const { cleaned, files } = await this.extractOutgoingFiles(replyText, cwd);
+        await cb.onReply(cleaned, files.length ? files : undefined);
+
+        if (bot.memoryMode === 'companion') {
+          await this.maybeRefreshCompanionMemory(key, windowName);
+        }
+        return;
+      } catch (err) {
+        await this.tmux.killWindow(windowName).catch(() => {});
+        await this.sessions.remove(key).catch(() => {});
+
+        if (i === engines.length - 1) {
+          const reason = err instanceof Error ? err.message : String(err);
+          await cb.onReply(
+            `⌛ 응답을 기다리는 동안 시간이 초과되었거나 오류가 발생했어요 (${reason}).`,
+          );
+        }
+      }
     }
   }
 

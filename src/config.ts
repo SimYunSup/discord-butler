@@ -26,6 +26,11 @@ export interface ButlerConfig {
   /** Default agent backend for bots that don't set their own (BUTLER_AGENT). */
   defaultAgent: AgentKind;
   /**
+   * Ordered list of fallback backends to try when the primary agent fails
+   * (BUTLER_FALLBACK_AGENTS, comma-separated AgentKind). Empty = no fallback.
+   */
+  fallbackAgents: AgentKind[];
+  /**
    * Kimi (Moonshot) backend settings. Only consulted when a bot — or the global
    * default — selects the `kimi` agent. `authToken` empty means Kimi is not
    * configured (selecting it then fails with a clear error).
@@ -34,6 +39,20 @@ export interface ButlerConfig {
     /** Moonshot's Anthropic-compatible base URL (ANTHROPIC_BASE_URL). */
     baseUrl: string;
     /** Moonshot API key (ANTHROPIC_AUTH_TOKEN). */
+    authToken: string;
+    /** Optional model id to pin (ANTHROPIC_MODEL); empty → endpoint default. */
+    model: string;
+  };
+  /**
+   * GLM (Z.ai / Zhipu) backend settings. Same shape as {@link kimi}: only
+   * consulted when a bot — or the global default — selects the `glm` agent.
+   * `authToken` empty means GLM is not configured (selecting it then fails with
+   * a clear error).
+   */
+  glm: {
+    /** Z.ai's Anthropic-compatible base URL (ANTHROPIC_BASE_URL). */
+    baseUrl: string;
+    /** Z.ai API key (ANTHROPIC_AUTH_TOKEN). */
     authToken: string;
     /** Optional model id to pin (ANTHROPIC_MODEL); empty → endpoint default. */
     model: string;
@@ -99,12 +118,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
   }
   const defaultAgent: AgentKind = agentRaw && isAgentKind(agentRaw) ? agentRaw : DEFAULT_AGENT;
 
+  const fallbackRaw = env.BUTLER_FALLBACK_AGENTS?.trim() ?? '';
+  const seen = new Set<AgentKind>();
+  const fallbackAgents: AgentKind[] = fallbackRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s): s is AgentKind => {
+      if (!isAgentKind(s) || seen.has(s)) return false;
+      seen.add(s);
+      return true;
+    });
+
   const kimi = {
     // Moonshot's documented Anthropic-compatible endpoint (override per region,
     // e.g. https://api.moonshot.cn/anthropic). Trailing slash not required.
     baseUrl: env.KIMI_BASE_URL?.trim() || 'https://api.moonshot.ai/anthropic',
     authToken: env.KIMI_AUTH_TOKEN?.trim() || '',
     model: env.KIMI_MODEL?.trim() || '',
+  };
+
+  const glm = {
+    // Z.ai's documented Anthropic-compatible endpoint (override per region, e.g.
+    // https://open.bigmodel.cn/api/anthropic for the China/BigModel site).
+    // Trailing slash not required.
+    baseUrl: env.GLM_BASE_URL?.trim() || 'https://api.z.ai/api/anthropic',
+    authToken: env.GLM_AUTH_TOKEN?.trim() || '',
+    model: env.GLM_MODEL?.trim() || '',
   };
 
   // EXPERIMENTAL: openai/codex-plugin-cc loaded into Claude Code (see src/agents/codex.ts).
@@ -122,7 +161,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ButlerConfig {
     httpPort,
     triggerToken,
     defaultAgent,
+    fallbackAgents,
     kimi,
+    glm,
     codex,
   };
 }

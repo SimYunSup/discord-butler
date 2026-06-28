@@ -6,6 +6,8 @@ import type { ButlerConfig } from '../config.js';
  * - `claude`: the default — the `claude` Claude Code CLI.
  * - `kimi`:   the SAME Claude Code CLI pointed at Moonshot's Anthropic-compatible
  *             endpoint via env (config-only; see {@link ./kimi.ts}).
+ * - `glm`:    the SAME Claude Code CLI pointed at Z.ai's Anthropic-compatible
+ *             endpoint via env (config-only; see {@link ./glm.ts}).
  * - `codex`:  EXPERIMENTAL — the SAME Claude Code CLI with the openai/codex-plugin-cc
  *             plugin loaded so it can delegate to Codex (see {@link ./codex.ts}).
  *
@@ -13,10 +15,10 @@ import type { ButlerConfig } from '../config.js';
  * would add another kind plus its own completion-signal source (Codex `notify` /
  * `exec --json`); see the README "Agent backends → Codex".
  */
-export type AgentKind = 'claude' | 'kimi' | 'codex';
+export type AgentKind = 'claude' | 'kimi' | 'glm' | 'codex';
 
 /** All known backend kinds (used to validate env/registry input). */
-export const AGENT_KINDS: readonly AgentKind[] = ['claude', 'kimi', 'codex'];
+export const AGENT_KINDS: readonly AgentKind[] = ['claude', 'kimi', 'glm', 'codex'];
 
 /** Default backend when a bot doesn't specify one and no global override is set. */
 export const DEFAULT_AGENT: AgentKind = 'claude';
@@ -39,7 +41,7 @@ export interface AgentLaunch {
 /**
  * An agent backend: the behaviors the bridge varies per agent.
  *
- * The Claude-family backends (`claude`, `kimi`) share Claude Code's machinery —
+ * The Claude-family backends (`claude`, `kimi`, `glm`) share Claude Code's machinery —
  * the Stop/Notification hooks (completion detection), folder trust, and the
  * `.claude/settings.json` permissions allowlist — so those live in the shared
  * workspace/trust modules and are deliberately NOT part of this interface. What

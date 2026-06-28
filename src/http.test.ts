@@ -14,7 +14,9 @@ const cfg: ButlerConfig = {
   httpPort: 0,
   triggerToken: 'secret',
   defaultAgent: 'claude',
+  fallbackAgents: [],
   kimi: { baseUrl: 'https://api.moonshot.ai/anthropic', authToken: '', model: '' },
+  glm: { baseUrl: 'https://api.z.ai/api/anthropic', authToken: '', model: '' },
   codex: { pluginDir: '' },
 };
 
