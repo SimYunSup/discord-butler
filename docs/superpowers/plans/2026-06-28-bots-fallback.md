@@ -69,7 +69,7 @@ it('deduplicates fallbackAgents', () => {
 - [ ] **Step 2: 테스트 실행 — 실패 확인**
 
 ```bash
-cd /Users/pedogunu/Projects/discord-butler && pnpm test 2>&1 | tail -20
+cd discord-butler && pnpm test 2>&1 | tail -20
 ```
 
 Expected: `config.test.ts`의 새 4개 테스트 fail (property does not exist)
@@ -144,8 +144,8 @@ Expected: 오류 없음
 - [ ] **Step 7: 커밋**
 
 ```bash
-git -C /Users/pedogunu/Projects/discord-butler add src/config.ts src/config.test.ts
-git -C /Users/pedogunu/Projects/discord-butler commit -m "feat(config): add fallbackAgents parsed from BUTLER_FALLBACK_AGENTS"
+git -C discord-butler add src/config.ts src/config.test.ts
+git -C discord-butler commit -m "feat(config): add fallbackAgents parsed from BUTLER_FALLBACK_AGENTS"
 ```
 
 ---
@@ -397,8 +397,8 @@ pnpm typecheck
 - [ ] **Step 7: 커밋**
 
 ```bash
-git -C /Users/pedogunu/Projects/discord-butler add src/bots/registry.ts src/bots/registry.test.ts
-git -C /Users/pedogunu/Projects/discord-butler commit -m "feat(bots): add research, counseling, ask, resume bots"
+git -C discord-butler add src/bots/registry.ts src/bots/registry.test.ts
+git -C discord-butler commit -m "feat(bots): add research, counseling, ask, resume bots"
 ```
 
 ---
@@ -571,8 +571,8 @@ Expected: 모든 테스트 PASS (bridge 로직 테스트는 없지만 기존 테
 - [ ] **Step 5: 커밋**
 
 ```bash
-git -C /Users/pedogunu/Projects/discord-butler add src/bridge.ts
-git -C /Users/pedogunu/Projects/discord-butler commit -m "feat(bridge): add claude→kimi→glm fallback engine chain"
+git -C discord-butler add src/bridge.ts
+git -C discord-butler commit -m "feat(bridge): add claude→kimi→glm fallback engine chain"
 ```
 
 ---
@@ -622,8 +622,8 @@ BUTLER_FALLBACK_AGENTS=
 - [ ] **Step 2: 커밋**
 
 ```bash
-git -C /Users/pedogunu/Projects/discord-butler add .env.example
-git -C /Users/pedogunu/Projects/discord-butler commit -m "chore: add BUTLER_FALLBACK_AGENTS to .env.example, update model hints"
+git -C discord-butler add .env.example
+git -C discord-butler commit -m "chore: add BUTLER_FALLBACK_AGENTS to .env.example, update model hints"
 ```
 
 ---
@@ -635,7 +635,7 @@ git -C /Users/pedogunu/Projects/discord-butler commit -m "chore: add BUTLER_FALL
 - [ ] `pnpm build` — 빌드 성공
 
 ```bash
-cd /Users/pedogunu/Projects/discord-butler && pnpm typecheck && pnpm test && pnpm build
+cd discord-butler && pnpm typecheck && pnpm test && pnpm build
 ```
 
 ---
@@ -645,8 +645,8 @@ cd /Users/pedogunu/Projects/discord-butler && pnpm typecheck && pnpm test && pnp
 커밋 전 개인정보 누출 확인:
 
 ```bash
-grep -rniE '192\.168\.|yunsub|pedogunu|pickhealer|626062820|SEOYEON_DISCORD_ID' \
-  /Users/pedogunu/Projects/discord-butler/src/ 2>/dev/null
+grep -rniE '<server-ip>|<server-user>|<dev-user>|<email>|<discord-ids>' \
+  discord-butler/src/ 2>/dev/null
 ```
 
 Expected: 출력 없음 (신규 파일에 개인정보 없어야 함)

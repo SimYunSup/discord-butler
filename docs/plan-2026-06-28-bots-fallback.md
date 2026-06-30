@@ -17,7 +17,7 @@ discord-butler의 현재 `Bot` 타입 필드만 사용.
 
 - `model`/`effort` 필드는 discord-butler에 아직 없으므로 생략 (전역 `BUTLER_AGENT` 따름)
 - `redact`, `skillFiles`, `sharedRefs`, `mcpServers` 미사용
-- 서버 절대경로(`/Users/yunsub/...`) 페르소나에서 완전 제거
+- 서버 절대경로(`~/<butler>/...` 류) 페르소나에서 완전 제거
 
 ---
 
