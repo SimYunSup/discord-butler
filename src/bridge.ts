@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { parseFileBlock, type OutgoingFile } from './discord/post.js';
 import type { ButlerConfig } from './config.js';
 import type { Bot } from './bots/types.js';
+import { resolveModelTier } from './bots/model-escalation.js';
 import { TmuxManager } from './tmux/manager.js';
 import { SessionMapStore } from './persistence/session-map.js';
 import { ensureWorkspace, eventsFile } from './claude/workspace.js';
@@ -49,6 +50,14 @@ export interface BridgeCallbacks {
   onReply: (text: string, files?: OutgoingFile[]) => Promise<void> | void;
   /** Surface a permission/idle notification (e.g. as a Discord message/button). */
   onNotification?: (message: string, notificationType: string | undefined) => Promise<void> | void;
+  /**
+   * A claude-native permission prompt appeared (the model called a tool not on the
+   * allowlist). The bridge CANNOT drive that arrow-key TUI menu, so left alone the
+   * turn hangs until the idle timeout. When provided, this is invoked INSTEAD of
+   * onNotification to auto-decline (send Escape) so the turn continues — the model
+   * is told "no" and adapts to its allowed tools.
+   */
+  onPermissionPrompt?: () => Promise<void> | void;
 }
 
 /**
@@ -192,6 +201,11 @@ export class Bridge {
     const fullText = (base + attachNote).trim();
     if (!fullText) return;
 
+    // Per-message model/effort escalation: resolve the tier from the user's raw
+    // text (base = bot.model/effort; a matching trigger overrides). Only the claude
+    // backend emits these as `--model`/`--effort`; other backends ignore the tier.
+    const tier = resolveModelTier({ model: bot.model, effort: bot.effort }, bot.modelEscalation, text);
+
     // 4. Try each engine in order. On timeout/error, kill the window and start the
     //    next engine fresh. Config errors skip to the next fallback.
     for (let i = 0; i < engines.length; i++) {
@@ -200,7 +214,7 @@ export class Bridge {
 
       let launch: AgentLaunch;
       try {
-        launch = backend.launch(this.config);
+        launch = backend.launch(this.config, tier);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         if (i === engines.length - 1) {
@@ -229,13 +243,34 @@ export class Bridge {
         }
 
         const events = eventsFile(this.config.dataDir, key);
-        const waitForStop = this.awaitNextStop(events, cb);
+        // Auto-decline un-answerable claude-native permission prompts (model reached
+        // for a non-allowlisted tool): send Escape so the turn continues instead of
+        // hanging until the idle timeout.
+        const awaitCb: BridgeCallbacks = {
+          ...cb,
+          onPermissionPrompt: () => {
+            console.warn(
+              `[bridge] auto-declining permission prompt in "${windowName}" (off-allowlist tool)`,
+            );
+            return this.tmux.sendKey(windowName, 'Escape');
+          },
+        };
+        const waitForStop = this.awaitNextStop(events, awaitCb);
         await this.tmux.sendText(windowName, fullText);
         const replyText = await waitForStop;
 
         await this.sessions.touch(key);
         const { cleaned, files } = await this.extractOutgoingFiles(replyText, cwd);
-        await cb.onReply(cleaned, files.length ? files : undefined);
+        // Guard the silent empty reply: if there's no text AND no attachment, don't
+        // post a bare blank. If the reply tried to attach a file (butler-file block
+        // present) but none survived, say WHY so the user isn't left with a blank.
+        let finalText = cleaned;
+        if (!finalText.trim() && !files.length) {
+          finalText = /```butler-file/i.test(replyText)
+            ? '⚠️ 파일을 첨부하려 했지만 전송하지 못했어요 (경로가 작업공간 밖이거나 파일이 없음). 파일을 `./output/` 아래에 저장한 뒤 다시 시도해 주세요.'
+            : '⚠️ 빈 응답을 받았어요. 다시 한 번 요청해 주세요.';
+        }
+        await cb.onReply(finalText, files.length ? files : undefined);
 
         if (bot.memoryMode === 'companion') {
           await this.maybeRefreshCompanionMemory(key, windowName);
@@ -287,7 +322,8 @@ export class Bridge {
 
   /**
    * Resolves a ```butler-file block in `text` into Discord attachments. Each path
-   * is resolved against the conversation cwd and MUST stay under dataDir (no
+   * is resolved against the conversation cwd and MUST stay under dataDir OR this
+   * conversation's own Claude Code scratchpad (no cross-conversation/host-path
    * exfiltration). Missing / oversized / out-of-bounds files are skipped (logged).
    * Returns the text with the block removed and the readable files.
    */
@@ -298,13 +334,22 @@ export class Bridge {
     const parsed = parseFileBlock(text);
     if (!parsed) return { cleaned: text, files: [] };
     const root = resolve(this.config.dataDir);
+    // Claude Code hands each bot a private scratchpad at
+    // <tmp>/claude-<uid>/<encoded-cwd>/<uuid>/scratchpad, where <encoded-cwd> is the
+    // cwd with every non-alphanumeric char turned into '-'. A bot naturally writes
+    // generated files (PNGs, PDFs) there, so allow attaching from it too — the
+    // encoded-cwd is unique to THIS conversation, so this can't reach another
+    // conversation's files or arbitrary host paths.
+    const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
     const MAX_BYTES = 24 * 1024 * 1024; // Discord upload ceiling headroom
     const files: OutgoingFile[] = [];
     for (const p of parsed.paths) {
       try {
         const abs = resolve(cwd, p);
-        if (abs !== root && !abs.startsWith(`${root}/`)) {
-          console.warn(`[bridge] butler-file outside dataDir, skipped: ${p}`);
+        const underData = abs === root || abs.startsWith(`${root}/`);
+        const underOwnScratch = abs.includes('/claude-') && abs.includes(`/${encodedCwd}/`);
+        if (!underData && !underOwnScratch) {
+          console.warn(`[bridge] butler-file outside dataDir/scratchpad, skipped: ${p}`);
           continue;
         }
         const s = await stat(abs);
@@ -489,6 +534,13 @@ export function tailEventsForStop(
         // `idle_prompt` is not actionable for the Discord user; drop it (stuck turns
         // still surface via the idle/absolute deadlines above).
         if (notificationType === 'idle_prompt') return;
+        // A claude-native permission prompt is un-answerable from Discord (no way to
+        // drive the TUI menu). If the caller wired an auto-decliner, use it so the
+        // turn doesn't hang; otherwise fall back to surfacing the notification.
+        if (notificationType === 'permission_prompt' && cb.onPermissionPrompt) {
+          void cb.onPermissionPrompt();
+          return;
+        }
         void cb.onNotification?.(message, notificationType);
         return;
       }

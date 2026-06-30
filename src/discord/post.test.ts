@@ -39,3 +39,12 @@ it('parses a butler-file block (paths) and cleans the text', () => {
 it('parseFileBlock returns null without a block', () => {
   assert.equal(parseFileBlock('just text'), null);
 });
+
+it('parseFileBlock tolerates a path:/name: key:value block', () => {
+  const r = parseFileBlock(
+    '여기요:\n```butler-file\npath: ./output/report.pdf\nname: 보고서\n```',
+  );
+  assert.ok(r);
+  // 'path:' prefix stripped, 'name:' metadata line dropped.
+  assert.deepEqual(r!.paths, ['./output/report.pdf']);
+});

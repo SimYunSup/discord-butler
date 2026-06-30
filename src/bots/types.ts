@@ -10,6 +10,25 @@ import type { AgentKind } from '../agents/types.js';
 export type MemoryMode = 'task' | 'companion';
 
 /**
+ * Per-turn model/effort escalation: the user's raw text is matched on two
+ * INDEPENDENT axes that compose. A model trigger bumps the model; an effort
+ * trigger bumps the effort; a message hitting both reaches the top (e.g.
+ * "opus" + "deep" → Opus xhigh). Matching is a case-insensitive substring test.
+ * Applied at window-launch time (a fresh window takes the resolved `--model`/
+ * `--effort`); see {@link ./model-escalation.ts}.
+ */
+export interface ModelEscalation {
+  /** Case-insensitive substrings; ANY match bumps the model to {@link escalatedModel}. */
+  modelTriggers: string[];
+  /** Model alias/id to switch to when a {@link modelTriggers} entry matches (e.g. 'opus'). */
+  escalatedModel: string;
+  /** Case-insensitive substrings; ANY match bumps the effort to {@link escalatedEffort}. */
+  effortTriggers: string[];
+  /** Effort level to switch to when an {@link effortTriggers} entry matches (e.g. 'xhigh'). */
+  escalatedEffort: string;
+}
+
+/**
  * A bot definition. Adding a new bot to the platform = adding one of these to
  * the registry (plus, eventually, its tools/MCP config). The shared core does
  * not special-case any bot.
@@ -31,6 +50,27 @@ export interface Bot {
    * `.claude/settings.json` permissions allowlist (e.g. ['WebSearch', 'WebFetch']).
    */
   allowedTools: string[];
+  /**
+   * Tools to explicitly DENY (silently blocked, no interactive prompt), merged into
+   * the settings.json deny list on top of the always-denied interactive tools
+   * (AskUserQuestion/ExitPlanMode). Use to stop a weak model from reaching for a
+   * tool that would derail the turn — e.g. denying the `Task`/`Agent` subagent so a
+   * model can't delegate to a context-less child.
+   */
+  denyTools?: string[];
+  /**
+   * Base model alias/id this bot's claude REPL launches with (`--model`), e.g.
+   * 'opus' / 'sonnet' / 'haiku'. Omitted → the user's default model (no flag).
+   * A matching {@link modelEscalation} trigger can override this per turn.
+   */
+  model?: string;
+  /**
+   * Base reasoning effort this bot launches with (`--effort`), e.g. 'low' /
+   * 'medium' / 'high' / 'xhigh'. Omitted → no flag.
+   */
+  effort?: string;
+  /** Optional per-turn model/effort escalation matched on the user's text. */
+  modelEscalation?: ModelEscalation;
   /**
    * Whether this bot is shared across users (isolated per-user via private threads,
    * conversationKey = `${botId}__${userId}`) or personal (conversationKey = botId).

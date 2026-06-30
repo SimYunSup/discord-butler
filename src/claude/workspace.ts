@@ -137,7 +137,8 @@ function renderSettingsJson(bot: Bot, hookScriptPath: string, eventsPath: string
       // an arrow-key TUI menu and ExitPlanMode a plan-approval prompt. Either one
       // leaves the turn waiting for navigation that never comes (no Stop → timeout).
       // Denied here so claude asks in plain text instead (which the bridge relays).
-      deny: ['AskUserQuestion', 'ExitPlanMode'],
+      // Plus any per-bot denyTools (silently blocked, no prompt).
+      deny: ['AskUserQuestion', 'ExitPlanMode', ...(bot.denyTools ?? [])],
     },
     hooks: {
       // Fires when the assistant finishes a turn → carries last_assistant_message.

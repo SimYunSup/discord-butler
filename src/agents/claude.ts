@@ -11,7 +11,12 @@ import type { AgentBackend, AgentLaunch } from './types.js';
 export const claudeBackend: AgentBackend = {
   kind: 'claude',
   instructionsFile: 'CLAUDE.md',
-  launch(config: ButlerConfig): AgentLaunch {
-    return { bin: config.claudeBin, args: [], env: {} };
+  launch(config: ButlerConfig, tier?: { model?: string; effort?: string }): AgentLaunch {
+    // Per-bot model/effort ride as launch flags on a fresh window (the resolved
+    // tier comes from the bot's base + any escalation matched on the user's text).
+    const args: string[] = [];
+    if (tier?.model) args.push('--model', tier.model);
+    if (tier?.effort) args.push('--effort', tier.effort);
+    return { bin: config.claudeBin, args, env: {} };
   },
 };

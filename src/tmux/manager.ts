@@ -245,6 +245,16 @@ export class TmuxManager {
     }
   }
 
+  /**
+   * Sends a single named key to a window (e.g. `'Escape'`, `'Enter'`). Used to
+   * auto-decline an un-answerable claude-native permission prompt: the bridge
+   * can't drive the arrow-key TUI menu, so it presses Escape to decline and let
+   * the turn continue instead of hanging until the idle timeout.
+   */
+  async sendKey(windowName: string, key: string): Promise<void> {
+    await this.tmux(['send-keys', '-t', `${BUTLER_SESSION}:${windowName}`, key]);
+  }
+
   /** Kills a conversation's window (task-mode cleanup after a reply). */
   async killWindow(windowName: string): Promise<void> {
     if (!(await this.windowExists(windowName))) return;

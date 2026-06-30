@@ -98,14 +98,27 @@ export interface OutgoingFile {
  *   ```butler-file
  *   ./output/report.pdf
  *   ```
+ *
+ * The documented form is one bare path per line, but models sometimes improvise a
+ * `path: …` / `name: …` key:value form, so we tolerate a leading `path:`/`file:`
+ * prefix and drop metadata lines (`name:`/`title:`/…) rather than mistaking them
+ * for filenames — otherwise the attachment silently vanishes and the turn can come
+ * out empty.
  */
 export function parseFileBlock(text: string): { cleaned: string; paths: string[] } | null {
   const fence = /```butler-file\s*\n([\s\S]*?)```/i;
   const m = text.match(fence);
   if (!m) return null;
+  const META_KEY = /^(name|title|caption|type|mime|desc|description|label)\s*:/i;
   const paths = (m[1] ?? '')
     .split('\n')
     .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !META_KEY.test(l)) // drop `name:`/`title:`/… metadata lines
+    .map((l) => {
+      const kv = /^(?:path|file)\s*:\s*(.+)$/i.exec(l); // strip a `path:`/`file:` prefix
+      return kv ? kv[1]!.trim() : l;
+    })
     .filter(Boolean)
     .slice(0, 5);
   if (paths.length === 0) return null;

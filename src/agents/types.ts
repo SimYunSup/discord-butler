@@ -60,6 +60,10 @@ export interface AgentBackend {
   /**
    * Resolves how to launch this backend from runtime config. May throw with a
    * clear message if required config (e.g. an auth token) is missing.
+   *
+   * `tier` (optional) carries the model/effort resolved for this turn. Only the
+   * `claude` backend emits `--model`/`--effort` from it — the model aliases are
+   * Claude-specific, so the Kimi/GLM/Codex backends ignore it.
    */
-  launch(config: ButlerConfig): AgentLaunch;
+  launch(config: ButlerConfig, tier?: { model?: string; effort?: string }): AgentLaunch;
 }
