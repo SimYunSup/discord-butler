@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { idleSessionKeys } from './reaper.js';
+import { deadSessionKeys, idleSessionKeys, orphanWindowNames } from './reaper.js';
 import type { SessionMap } from './persistence/session-map.js';
+import type { TmuxWindowInfo } from './tmux/manager.js';
 
 const NOW = Date.parse('2026-06-20T20:00:00.000Z');
 const HOUR = 60 * 60 * 1000;
@@ -31,4 +32,32 @@ test('idleSessionKeys skips entries with an empty/unparsable timestamp (never re
 
 test('idleSessionKeys is empty when nothing is stale', () => {
   assert.deepEqual(idleSessionKeys({ a: entry(0.5), b: entry(2) }, NOW, 5 * HOUR), []);
+});
+
+test('orphanWindowNames returns tmux windows not tracked by session-map', () => {
+  const map: SessionMap = {
+    a: { ...entry(1), window: 'tracked-a' },
+    b: { ...entry(1), window: 'tracked-b' },
+  };
+  const windows: TmuxWindowInfo[] = [
+    { name: 'tracked-a', command: 'claude', dead: false },
+    { name: 'orphan', command: 'claude', dead: false },
+    { name: 'tracked-b', command: 'claude', dead: false },
+  ];
+  assert.deepEqual(orphanWindowNames(map, windows), ['orphan']);
+});
+
+test('deadSessionKeys includes missing windows and shells left after CLI exit', () => {
+  const map: SessionMap = {
+    missing: { ...entry(1), window: 'missing-window' },
+    shell: { ...entry(1), window: 'shell-window' },
+    dead: { ...entry(1), window: 'dead-window' },
+    live: { ...entry(1), window: 'live-window' },
+  };
+  const windows: TmuxWindowInfo[] = [
+    { name: 'shell-window', command: 'bash', dead: false },
+    { name: 'dead-window', command: 'claude', dead: true },
+    { name: 'live-window', command: 'claude', dead: false },
+  ];
+  assert.deepEqual(deadSessionKeys(map, windows).sort(), ['dead', 'missing', 'shell']);
 });

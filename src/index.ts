@@ -1,7 +1,7 @@
 import type { SendableChannels } from 'discord.js';
 import { loadConfig } from './config.js';
 import { createClient, initClient } from './discord/client.js';
-import { registerHandler } from './discord/handler.js';
+import { closeThread, registerHandler } from './discord/handler.js';
 import { findTextChannelByName, postReply } from './discord/post.js';
 import { Bridge } from './bridge.js';
 import { startTriggerServer } from './http.js';
@@ -78,6 +78,9 @@ async function main(): Promise<void> {
       await channel
         .send({ content: '🧹 이 대화가 5시간 넘게 멈춰 있어 세션을 정리했어요. 다음 메시지부터 새 대화로 시작합니다.' })
         .catch((err) => console.warn(`[reaper] notify failed (${key}):`, err));
+      // Session already reaped — close the (now-dead) thread like /end so the next
+      // message opens a fresh thread instead of reviving this one via auto-unarchive.
+      await closeThread(channel, 'discord-butler: 5시간 유휴로 세션을 정리했어요');
     },
   });
 

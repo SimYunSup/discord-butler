@@ -88,10 +88,25 @@ export function startTriggerServer(config: ButlerConfig, deps: TriggerDeps): Ser
     return undefined;
   }
   const server = createServer(createTriggerListener(config, deps));
-  server.listen(config.httpPort, '127.0.0.1', () => {
-    const addr = server.address();
-    const port = typeof addr === 'object' && addr ? addr.port : config.httpPort;
-    console.log(`[http] trigger server on 127.0.0.1:${port}`);
+  let retries = 0;
+  const bind = (): void => {
+    server.listen(config.httpPort, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : config.httpPort;
+      console.log(`[http] trigger server on 127.0.0.1:${port}`);
+    });
+  };
+  // 재기동 순간 옛 리스닝 소켓이 TIME_WAIT로 남아 EADDRINUSE가 나면, 워커를 죽게
+  // 두는 대신 짧게 재시도한다 (포트 충돌로 워커가 또 교체되는 연쇄를 끊는다).
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE' && retries < 10) {
+      retries += 1;
+      console.warn(`[http] ${config.httpPort} busy, retry ${retries}/10 in 1s…`);
+      setTimeout(bind, 1000);
+    } else {
+      console.error('[http] trigger server fatal:', err);
+    }
   });
+  bind();
   return server;
 }

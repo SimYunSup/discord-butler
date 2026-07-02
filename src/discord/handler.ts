@@ -11,7 +11,7 @@ import {
   type StringSelectMenuInteraction,
   type TextChannel,
 } from 'discord.js';
-import type { Bridge } from '../bridge.js';
+import { isEndCommand, type Bridge } from '../bridge.js';
 import type { Bot } from '../bots/types.js';
 import { conversationKey, findBotForChannel } from '../router.js';
 import { postChunked, postReply, SELECT_CUSTOM_ID } from './post.js';
@@ -357,10 +357,35 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
       void message.reactions.resolve('⏳')?.users.remove(botUserId).catch(() => undefined);
     }
     void message.react('✅').catch(() => undefined);
+    // A typed /end inside a thread closes that thread. The bridge already reset the
+    // session above; closing (archive+lock) stops Discord auto-unarchiving the same
+    // thread on the next message, so the user gets a fresh thread instead.
+    if (isEndCommand(text)) await closeThread(replyChannel, 'discord-butler: /end로 대화를 종료했어요');
   } catch (err) {
     void message.react('⚠️').catch(() => undefined);
     throw err;
   } finally {
     clearInterval(typingTimer);
+  }
+}
+
+/**
+ * Closes a thread by archiving AND locking it. Archiving alone is a soft close — Discord
+ * auto-unarchives on the next message, resurrecting the SAME thread (and its
+ * conversationKey). Locking blocks that: a non-manager can't post in a locked thread, so
+ * instead of reopening the old thread they get a fresh one from the parent channel
+ * (thread reuse skips archived threads). This is deliberate — both /end ("start over,
+ * don't carry the old record forward") and the idle reaper (session already reaped, old
+ * thread is dead) want a new thread on the next message, not the stale one revived. Both
+ * flags go in one atomic edit; best-effort, a failure just leaves the thread open. NOTE:
+ * users with Manage Threads (e.g. the guild owner) can still post in a locked thread, so
+ * this is a soft guard for regular members.
+ */
+export async function closeThread(channel: SendableChannels, reason: string): Promise<void> {
+  if (!channel.isThread()) return;
+  try {
+    await channel.edit({ archived: true, locked: true, reason });
+  } catch (err) {
+    console.error('[handler] failed to close thread:', err);
   }
 }

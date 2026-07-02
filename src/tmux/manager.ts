@@ -37,6 +37,19 @@ const TRUST_RE = /trust the files|do you trust/i;
 const WORKING_RE = /esc to interrupt|esc to cancel|\besc\b to|Thinking|Working|Synthesi|tokens|✶|✳|·\s*$/i;
 
 /** First line of the message, trimmed + sliced — a stable signature to find in the pane. */
+export interface TmuxWindowInfo {
+  name: string;
+  command: string;
+  dead: boolean;
+}
+
+export function parseWindowInfoLine(line: string): TmuxWindowInfo | undefined {
+  const [name = '', command = '', dead = '0'] = line.split('|');
+  if (!name) return undefined;
+  return { name, command, dead: dead === '1' };
+}
+
+/** First line of the message, trimmed + sliced — a stable signature to find in the pane. */
 export function inputProbe(text: string): string {
   return (text.split('\n', 1)[0] ?? '').trim().slice(0, 20);
 }
@@ -225,6 +238,14 @@ export class TmuxManager {
   async sendText(windowName: string, text: string): Promise<void> {
     const target = `${BUTLER_SESSION}:${windowName}`;
     const probe = inputProbe(text);
+    // If a prior dropped/partial paste left text in the REPL input box, a new message
+    // would be appended to it and submitted garbled. When the pane looks ready (and not
+    // mid-work), clear the input line with C-u first.
+    const before = await this.capturePane(windowName);
+    if (READY_RE.test(before) && !WORKING_RE.test(before)) {
+      await this.tmux(['send-keys', '-t', target, 'C-u']);
+      await delay(150);
+    }
     // -l sends the buffer literally; the scaled wait lets the TUI ingest the paste
     // before Enter (else the Enter is dropped and the turn never submits).
     await this.tmux(['send-keys', '-t', target, '-l', text]);
@@ -253,6 +274,32 @@ export class TmuxManager {
    */
   async sendKey(windowName: string, key: string): Promise<void> {
     await this.tmux(['send-keys', '-t', `${BUTLER_SESSION}:${windowName}`, key]);
+  }
+
+  /**
+   * Lists every window in the butler session with its current pane command and
+   * dead flag — lets the reaper spot windows whose agent process exited (fell back
+   * to a bare shell or died) and orphan windows with no session-map entry.
+   */
+  async listWindowDetails(): Promise<TmuxWindowInfo[]> {
+    if (!(await this.sessionExists())) return [];
+    try {
+      const out = await this.tmux([
+        'list-windows',
+        '-t',
+        BUTLER_SESSION,
+        '-F',
+        '#{window_name}|#{pane_current_command}|#{pane_dead}',
+      ]);
+      return out
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map(parseWindowInfoLine)
+        .filter((w): w is TmuxWindowInfo => w !== undefined);
+    } catch {
+      return [];
+    }
   }
 
   /** Kills a conversation's window (task-mode cleanup after a reply). */

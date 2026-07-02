@@ -91,7 +91,7 @@ const COMPANION_MEMORY_EVERY_N_TURNS = 12;
 const END_COMMANDS = new Set(['/end', '/exit', '/quit', '/reset', '/new', '/종료', '/끝', '/새대화', '/그만']);
 
 /** Whether `text` is an explicit end-session command. */
-function isEndCommand(text: string): boolean {
+export function isEndCommand(text: string): boolean {
   return END_COMMANDS.has(text.trim().toLowerCase());
 }
 

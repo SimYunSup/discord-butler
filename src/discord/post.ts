@@ -106,12 +106,14 @@ export interface OutgoingFile {
  * out empty.
  */
 export function parseFileBlock(text: string): { cleaned: string; paths: string[] } | null {
-  const fence = /```butler-file\s*\n([\s\S]*?)```/i;
-  const m = text.match(fence);
-  if (!m) return null;
+  // Global: a reply may contain MULTIPLE butler-file blocks (the bot sometimes
+  // emits one block per file). Collect paths from every block and strip them all.
+  const fence = /```butler-file\s*\n([\s\S]*?)```/gi;
+  const matches = [...text.matchAll(fence)];
+  if (matches.length === 0) return null;
   const META_KEY = /^(name|title|caption|type|mime|desc|description|label)\s*:/i;
-  const paths = (m[1] ?? '')
-    .split('\n')
+  const paths = matches
+    .flatMap((m) => (m[1] ?? '').split('\n'))
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((l) => !META_KEY.test(l)) // drop `name:`/`title:`/… metadata lines

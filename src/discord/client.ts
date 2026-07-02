@@ -29,6 +29,10 @@ export function createClient(): Client {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
+    // The default REST request timeout is 15s — too short for file uploads
+    // (butler-file attachments) over a slow upstream, which abort with
+    // "DOMException [AbortError]". Give uploads room + extra retries.
+    rest: { timeout: 60_000, retries: 5 },
   });
 }
 
