@@ -56,15 +56,21 @@ it('saju is shared; finance persists via the finance sharedRef + flushOnEnd', ()
   assert.ok(finance!.flushOnEnd, 'finance flushes on /end');
 });
 
-it('counseling and resume are shared with threadPerMessage', () => {
+it('counseling and resume are personal (solo-use) bots', () => {
+  // Solo bots: not shared, no per-user/per-message threading → one workspace each.
   const counseling = bots.find((b) => b.id === 'counseling');
-  assert.equal(counseling!.shared, true);
-  assert.equal(counseling!.threadPerMessage, true);
+  assert.equal(counseling!.shared, false);
+  assert.notEqual(counseling!.threadPerMessage, true);
   assert.equal(counseling!.memoryMode, 'companion');
+  assert.ok(counseling!.flushOnEnd, 'counseling flushes memory.md on /end');
 
   const resume = bots.find((b) => b.id === 'resume');
-  assert.equal(resume!.shared, true);
-  assert.equal(resume!.threadPerMessage, true);
+  assert.equal(resume!.shared, false);
+  assert.notEqual(resume!.threadPerMessage, true);
+  assert.equal(resume!.memoryMode, 'task');
+  // Resume enrichments: the korean-humanizer skill + read-only gh profile exploration.
+  assert.ok(resume!.skillFiles?.some((f) => f.includes('korean-humanizer')), 'resume uses korean-humanizer');
+  assert.ok(resume!.allowedTools.includes('Bash(gh:*)'), 'resume can read GitHub via gh');
 });
 
 it('research and ask use threadPerMessage (personal)', () => {

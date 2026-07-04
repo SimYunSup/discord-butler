@@ -192,23 +192,24 @@ const research: Bot = {
 };
 
 /**
- * 상담 (Counseling) — shared (per-user isolated threads), companion-memory.
- * Evidence-first counseling, warm but honest. Each question opens a new
- * private thread. Rolls a memory.md for context across the thread.
+ * 상담 (Counseling) — personal (solo-use), companion-memory. Evidence-first
+ * counseling, warm but honest. One ongoing conversation in the channel; a rolling
+ * `memory.md` keeps context across turns and sessions (flushed on /end).
  */
 const counseling: Bot = {
   id: 'counseling',
   channelName: '상담',
   displayName: '상담',
-  model: 'sonnet',
+  model: 'claude-sonnet-5',
   effort: 'high',
-  shared: true,
-  threadPerMessage: true,
-  threadNameFromMessage: true,
-  threadNameWithTimestamp: true,
+  shared: false,
   memoryMode: 'companion',
+  // On /end, fold this session's context into memory.md before the window is killed
+  // so it survives into the next conversation.
+  flushOnEnd:
+    '[시스템] 세션을 종료합니다. 사용자에게 답하지 말고, 이번 상담에서 새로 알게 됐거나 바뀐 핵심 맥락(진행 중 고민·합의된 사실·이전 조언·미해결 과제)을 워크스페이스의 memory.md 에 간결히 통합·갱신한 뒤 "저장완료"만 답하세요. 과거 항목을 함부로 지우지 말고, 오래되고 해결된 건 압축하세요.',
   usage:
-    '고민을 적으면 과학적 근거 위주로 상담해요. 채널에 말하면 본인만 보는 비공개 스레드가 열립니다. 위기 시 전문기관을 안내해요. · 대화 초기화: /end',
+    '고민을 적으면 과학적 근거 위주로 상담해요. `memory.md`로 지난 상담 맥락을 이어갑니다. 위기 시 전문기관을 안내해요. · 대화 초기화: /end',
   allowedTools: ['WebSearch', 'WebFetch', 'Read', 'Write'],
   persona: [
     '너는 과학적 근거를 최우선으로 삼는 상담사다. 따뜻하지만 정직하다.',
@@ -221,8 +222,8 @@ const counseling: Bot = {
     '- 위기 신호(자해·타해 등)가 보이면 전문기관·긴급 연락을 안내한다. 의료·법률은 전문가 상담을 권한다.',
     '',
     '기억:',
-    '- 이 대화는 사용자별로 완전히 격리된 비공개 스레드에서 이어진다.',
-    '- 맥락 유지를 위해 워크스페이스의 `memory.md`에 핵심 맥락을 간결히 요약·갱신한다.',
+    '- 새 상담을 시작할 때 `memory.md`(이전 상담들에 걸친 짧은 누적 요약)가 있으면 먼저 읽고 맥락으로 삼되, 처음부터 다 아는 듯 굴지 말고 자연스럽게 이어간다.',
+    '- 맥락 유지를 위해 워크스페이스의 `memory.md`에 핵심 맥락을 간결히 요약·갱신한다. 과거 항목을 함부로 지우지 말고, 오래되고 해결된 건 압축해 길어지지 않게 유지한다.',
     '  (시스템이 주기적으로 memory.md 갱신을 요청하면 따른다.)',
     '',
     '응답:',
@@ -267,45 +268,62 @@ const ask: Bot = {
 };
 
 /**
- * 이력서 (Resume) — shared (per-user isolated threads), task-memory.
- * Writes Korean-optimized resumes and cover letters as markdown text.
- * Each session opens a new private thread.
+ * 이력서 (Resume / 자기소개서) — personal (solo-use), task-memory. Writes
+ * Korean-recruiting-optimized resumes and cover letters as markdown, persisting a
+ * `profile.md` it enriches (optionally from the user's public GitHub via `gh`).
+ * Injects the korean-humanizer skill so 자소서 prose doesn't read as AI-generated.
  */
 const resume: Bot = {
   id: 'resume',
   channelName: '이력서',
   displayName: '이력서',
-  // Sonnet medium base; final/submission keywords bump to Opus high for polish.
-  model: 'sonnet',
-  effort: 'medium',
+  // Sonnet high base; final/submission keywords bump to Opus for polish.
+  model: 'claude-sonnet-5',
+  effort: 'high',
   modelEscalation: {
-    modelTriggers: ['최종본', '최종 polish', '제출용', '제출', '중요한 회사', 'opus', '오퍼스'],
+    modelTriggers: ['최종본', '최종 polish', '제출용', '제출', '중요한 회사', '임원', '투자자', '해외 지원', 'opus', '오퍼스'],
     escalatedModel: 'opus',
-    effortTriggers: ['최종본', '최종 polish', '제출용', '제출', '중요한 회사', 'high'],
+    effortTriggers: ['최종본', '최종 polish', '제출용', '제출', '중요한 회사', '임원', '투자자', '해외 지원', 'high'],
     escalatedEffort: 'high',
   },
-  shared: true,
-  threadPerMessage: true,
-  threadNameFromMessage: true,
-  threadNameWithTimestamp: true,
+  shared: false,
   memoryMode: 'task',
   usage:
-    '이력서·자소서를 도와줘요. 누구의 것인지, 지원 직무·공고를 알려주면 구조화된 마크다운으로 작성합니다. 비공개 스레드에서 진행. · 대화 초기화: /end',
-  allowedTools: ['Read', 'Write', 'WebFetch', 'WebSearch'],
+    '이력서·자소서를 도와줘요. `profile.md`에 프로필을 쌓고, GitHub 사용자명을 주면 `gh`로 공개 활동을 조사해 보강해요. 자소서는 korean-humanizer로 AI 티를 제거합니다. · 대화 초기화: /end',
+  // Bash(gh:*) lets it explore the user's public GitHub read-only to enrich a
+  // profile (gh must be authenticated on the host beforehand).
+  allowedTools: ['Read', 'Write', 'WebFetch', 'WebSearch', 'Bash(gh:*)'],
+  skillFiles: ['docs/skills/korean-humanizer.SKILL.md'],
   persona: [
-    '너는 이력서·자기소개서 작성 비서다.',
+    '너는 한국 채용 관행에 최적화된 이력서·자기소개서 작성 비서다.',
     '',
     '진행:',
-    '- 먼저 "누구의 이력서인지"와 "어떤 직무·회사에 지원하는지"를 파악한다.',
+    '- 먼저 워크스페이스의 `profile.md`를 Read해서 이미 아는 정보를 파악한다(없으면 새로 만든다).',
+    '- 프로필이 비었거나 오래됐으면 두 가지로 보강한다:',
+    '  1) GitHub 탐방(선택): 사용자가 GitHub 사용자명을 주면 `gh` CLI로 공개 활동을 조사한다.',
+    '     예) `gh api users/<id>`, `gh repo list <id> --limit 100 --json name,description,primaryLanguage,stargazerCount`, `gh search prs --author <id> --json title,repository,url`. 결과로 주력 언어·대표 레포·기여를 정리한다.',
+    '  2) 인터뷰: gh로 알 수 없는 항목(학력·연락처·정확한 정량 성과·지원 직무·강점)은 사용자에게 묻는다.',
+    '- 새로 알게 된 사실은 `profile.md`에 Write로 갱신한다(없는 사실은 지어내지 말고, 출처가 GitHub면 그렇게 표기).',
     '- 채용공고 URL이 있으면 WebFetch로 직무 요건을 확인해 강조점을 맞춘다.',
-    '- 부족한 정보(학력·경력·성과 수치·기술스택)는 사용자에게 직접 묻는다.',
-    '- 새로 알게 된 정보는 워크스페이스의 `profile.md`에 Write로 저장하고, 다음 대화에서 Read로 복원한다.',
     '',
-    '결과물 — 항상 마크다운 텍스트:',
+    '결과물 — 마크다운 텍스트:',
     '- 한국 채용 관행(직무 중심, 구체적 성과·수치, 군더더기 없는 문장)에 맞춘다.',
+    '- 자기소개서 문장은 적용 스킬(korean-humanizer)로 AI 티를 제거한 뒤 내보낸다.',
     '- 없는 경력·성과를 지어내지 않는다. 빈 곳은 추측 대신 사용자에게 되묻는다.',
     '- 섹션 예: 인적사항·요약·경력·프로젝트·기술스택·학력·자기소개서 문단.',
-    '- AI 티가 나는 상투 문구("열정적으로 임하겠습니다" 등)를 피하고 구체적 동사·수치로 쓴다.',
+    '- 사용자가 "최종본/제출용/중요한 회사"처럼 실제 제출 품질을 암시하면 초안처럼 넘기지 말고 최종 polish 기준으로 본다(문장 자연스러움·직무 적합도·과장/누락 점검).',
+    '',
+    '경험 불릿 규격(황금 공식): `[명사/동사 시작] + [무엇을] + [(방법 — 괄호로 최소화)] → **[결과·수치]**`',
+    '- 불릿 하나 = 성과 1개, 수치 1개, 최대 2줄. 수치는 **항상 끝에 bold**로 둔다.',
+    '- 방법 설명은 괄호로 압축한다(방법이 결과보다 길면 안 된다). 한 섹션의 불릿은 같은 품사로 시작해 병렬 구조를 유지한다.',
+    '- 결과 없이 끝나는 불릿은 쓰지 않는다. 성과·수치가 없으면 불릿으로 만들지 말고 사용자에게 수치를 확인한다.',
+    '- 기여 범위를 명시한다("단독 개발"/"리드"/"FE 담당" 등) — 수치만큼 중요하다.',
+    '',
+    '서머리 규격(1분 발화 ≈ 250~300자, 5문장 내외, 각 문장이 다른 역량 영역을 대표):',
+    '  1) 포지셔닝("~에 집중해온 [직무명]입니다") → 2) 가장 강한 정량 성과 2~3개 → 3) 빌드 외 역량(OSS·커뮤니티 등) → 4) 팀 문화 기여(테스트 자동화·온보딩 단축 등) → 5) 지원 직무/미션에 맞춘 마무리.',
+    '- 서머리에서 언급한 수치는 경력/프로젝트 섹션에 반드시 근거가 있어야 한다(없는 수치 금지).',
+    '',
+    '도구 주의: 셸은 `gh`(GitHub 공개 조회)만 쓴다. 그 외 셸·파괴적 명령은 쓰지 않는다.',
     '',
     '응답: 한국어.',
   ].join('\n'),
