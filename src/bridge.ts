@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { parseFileBlock, type OutgoingFile } from './discord/post.js';
 import type { ButlerConfig } from './config.js';
 import type { Bot } from './bots/types.js';
+import { githubTokenEnv } from './bots/github-token.js';
 import { resolveModelTier } from './bots/model-escalation.js';
 import { TmuxManager } from './tmux/manager.js';
 import { SessionMapStore } from './persistence/session-map.js';
@@ -55,9 +56,17 @@ export interface BridgeCallbacks {
    * allowlist). The bridge CANNOT drive that arrow-key TUI menu, so left alone the
    * turn hangs until the idle timeout. When provided, this is invoked INSTEAD of
    * onNotification to auto-decline (send Escape) so the turn continues — the model
-   * is told "no" and adapts to its allowed tools.
+   * is told "no" and adapts to its allowed tools. Distinct from onApproval, which
+   * is the gated-run.sh Approve/Deny flow for risky bots (a separate Approval event).
    */
   onPermissionPrompt?: () => Promise<void> | void;
+  /**
+   * A gated bot's gated-run.sh emitted an Approval event: a destructive command
+   * (git push / issue create / PR comment / code execution) is blocked, waiting for
+   * a Discord button to approve or deny it. The handler posts Approve/Deny buttons;
+   * the click writes a decision file gated-run.sh is polling.
+   */
+  onApproval?: (cmd: string, key: string, reqId: string) => Promise<void> | void;
 }
 
 /**
@@ -122,6 +131,11 @@ export class Bridge {
     return this.sessions;
   }
 
+  /** The butler data dir (used by the /github-token command to store secrets). */
+  get dataDir(): string {
+    return this.config.dataDir;
+  }
+
   /**
    * Handles one user message for a conversation.
    *
@@ -144,8 +158,9 @@ export class Bridge {
     text: string,
     cb: BridgeCallbacks,
     attachments: IncomingAttachment[] = [],
+    opts: { authorId?: string } = {},
   ): Promise<void> {
-    return this.queue.run(key, () => this.runTurn(bot, key, text, cb, attachments));
+    return this.queue.run(key, () => this.runTurn(bot, key, text, cb, attachments, opts.authorId));
   }
 
   /** The actual turn body, run under the per-key queue (see handleMessage). */
@@ -155,6 +170,7 @@ export class Bridge {
     text: string,
     cb: BridgeCallbacks,
     attachments: IncomingAttachment[],
+    authorId?: string,
   ): Promise<void> {
     const windowName = sanitizeKey(key);
 
@@ -174,16 +190,47 @@ export class Bridge {
       return;
     }
 
-    // 1. Build the engine chain: [primary, ...fallbacks] with duplicates removed.
-    const primaryKind: AgentKind = bot.agent ?? this.config.defaultAgent;
-    const engines: AgentKind[] = [
-      primaryKind,
-      ...this.config.fallbackAgents.filter((kind) => kind !== primaryKind),
-    ];
+    // 0b. perUserGitHubAuth bot: token isolation + not-registered hard-gate, decided
+    //     BEFORE any window is launched.
+    let githubEnv: Record<string, string> | undefined;
+    if (bot.perUserGitHubAuth) {
+      // Defensive author-match guard: the key already embeds the userId (router), so
+      // another user can't produce the same key — but if an existing window's stored
+      // authorId differs from the current author (legacy/bug), that would be entering
+      // someone else's token window, so refuse unconditionally.
+      const prior = await this.sessions.get(key);
+      if (prior?.authorId && authorId && prior.authorId !== authorId) {
+        await cb.onReply('⛔ 이 작업 공간은 다른 사용자의 것이에요. 본인 채널/스레드에서 다시 시도해 주세요.');
+        return;
+      }
+      // Load ONLY the message author's own token. Not registered ⇒ don't launch the
+      // window at all — gated-run/git never runs, so a repo shell can never fall back
+      // to the host's `gh` login (the security core of the hard-gate).
+      githubEnv = authorId ? await githubTokenEnv(this.config.dataDir, authorId) : undefined;
+      if (!githubEnv) {
+        await cb.onReply(
+          '🔑 먼저 본인 GitHub 토큰을 등록해 주세요: `/github-token token:<PAT>` (응답은 본인만 보여요).\n' +
+            '권장: **classic PAT** (`repo` scope). 조직 레포면 그 토큰을 조직용으로 SSO 인가하세요. ' +
+            '(fine-grained PAT는 레포·조직마다 승인이 까다로워 classic을 권장합니다.)',
+        );
+        return;
+      }
+    }
 
-    // 2. Workspace (once, idempotent): persona + hooks written to disk. The current
-    // Claude-family backends use the same workspace format.
-    const primaryBackend = getBackend(primaryKind);
+    // 1. Build the engine chain: [primary, ...fallbacks] with duplicates removed.
+    //    Gated bots (github/code-review) are pinned to `claude` — the approval gate,
+    //    token injection, and Stop-hook completion detection assume it; a non-claude
+    //    fallback engine would silently drop the injected env / gate wiring.
+    const primaryKind: AgentKind = bot.agent ?? this.config.defaultAgent;
+    const engines: AgentKind[] =
+      bot.gatedShell || bot.perUserGitHubAuth
+        ? ['claude']
+        : [primaryKind, ...this.config.fallbackAgents.filter((kind) => kind !== primaryKind)];
+
+    // 2. Workspace (once, idempotent): persona + hooks written to disk. Use the
+    // backend that will actually run FIRST (engines[0]) so the instructions filename
+    // matches — for a gated bot that's the pinned `claude`, not a global default.
+    const primaryBackend = getBackend(engines[0]!);
     let cwd: string;
     try {
       cwd = await ensureWorkspace(this.config.dataDir, key, bot, this.hookScript, primaryBackend);
@@ -226,13 +273,40 @@ export class Bridge {
         continue;
       }
 
+      // Per-conversation env for gated / perUserGitHubAuth bots (the 8 stock bots are
+      // untouched — their launch env stays as the backend built it):
+      //  - githubEnv: THIS user's PAT + GIT_AUTHOR/COMMITTER (commit attribution).
+      //  - BUTLER_KEY/BUTLER_DATA_DIR: gated-run.sh reads the conversation key + data
+      //    dir from env (not $PWD), so the approval events/approvals paths stay correct
+      //    even when the bot runs a shell inside a cloned repo (work/<repo>).
+      //  - GIT_CEILING_DIRECTORIES: stop git/gh from walking ABOVE the workspace to
+      //    find a .git (the conversation dir sits inside this repo's tree; without a
+      //    ceiling a stray `gh pr checkout` could hijack the platform repo's worktree).
+      //  - BUTLER_ALLOW_CODE_EXEC: only for allowRepoCodeExec bots → gated-run keeps
+      //    node/npx/etc. in its allowlist (still always gated, owner-only approval).
+      if (bot.gatedShell || bot.perUserGitHubAuth) {
+        launch.env = {
+          ...launch.env,
+          ...(githubEnv ?? {}),
+          BUTLER_KEY: key,
+          BUTLER_DATA_DIR: this.config.dataDir,
+          GIT_CEILING_DIRECTORIES: dirname(cwd),
+          ...(bot.allowRepoCodeExec ? { BUTLER_ALLOW_CODE_EXEC: '1' } : {}),
+        };
+      }
+
       if (i > 0) {
         await cb.onReply(`⚙️ ${engineKind}입니다.`);
       }
 
       try {
         const created = await this.tmux.ensureWindow(windowName, cwd, launch);
-        await this.sessions.upsert(key, { window: windowName, cwd });
+        await this.sessions.upsert(key, {
+          window: windowName,
+          cwd,
+          // Record the owner so later turns' author-match guard + gate self-approval work.
+          ...(authorId ? { authorId } : {}),
+        });
         if (created) {
           const ready = await this.tmux.waitUntilReady(windowName);
           if (!ready) {
@@ -437,6 +511,34 @@ export class Bridge {
       maxTimeoutMs,
     });
   }
+
+  /**
+   * Records a decision for a gated command (from a Discord button click) to
+   * <dataDir>/approvals/<key>.<reqId>.decision, which gated-run.sh is polling.
+   */
+  async writeApprovalDecision(
+    key: string,
+    reqId: string,
+    decision: 'approve' | 'deny',
+  ): Promise<void> {
+    const dir = join(this.config.dataDir, 'approvals');
+    await mkdir(dir, { recursive: true });
+    const safe = (s: string): string => s.replace(/[^A-Za-z0-9_.-]/g, '_');
+    await writeFile(join(dir, `${safe(key)}.${safe(reqId)}.decision`), decision, 'utf8');
+  }
+
+  /**
+   * Whether a gated request needs OWNER approval (not requester self-approval).
+   * gated-run.sh drops a `<key>.<reqId>.owner` marker for code-execution commands
+   * (node/npx/deno/bun) on an allowRepoCodeExec bot — running a cloned repo's own
+   * code is an RCE vector on the host, so even a perUserGitHubAuth requester must NOT
+   * self-approve it. Absent marker (e.g. git push) ⇒ normal self-approval rules.
+   */
+  async requiresOwnerApproval(key: string, reqId: string): Promise<boolean> {
+    const safe = (s: string): string => s.replace(/[^A-Za-z0-9_.-]/g, '_');
+    const marker = join(this.config.dataDir, 'approvals', `${safe(key)}.${safe(reqId)}.owner`);
+    return (await stat(marker).catch(() => undefined)) !== undefined;
+  }
 }
 
 /** Deadlines for {@link tailEventsForStop}. */
@@ -542,6 +644,18 @@ export function tailEventsForStop(
           return;
         }
         void cb.onNotification?.(message, notificationType);
+        return;
+      }
+      if (evt.event === 'Approval') {
+        // A gated-run.sh command is blocked awaiting approval. Surface it (the handler
+        // posts Approve/Deny buttons); the wait continues — approval activity resets
+        // the idle deadline via resetIdle() above, so a pending gate never times out
+        // on idle alone (the absolute maxTimeout still backstops it).
+        const p = evt.payload;
+        const cmd = typeof p.cmd === 'string' ? p.cmd : '';
+        const gateKey = typeof p.key === 'string' ? p.key : '';
+        const reqId = typeof p.reqId === 'string' ? p.reqId : '';
+        if (cmd && gateKey && reqId) void cb.onApproval?.(cmd, gateKey, reqId);
         return;
       }
       if (evt.event === 'Stop') {

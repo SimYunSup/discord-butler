@@ -79,12 +79,16 @@ async function main() {
     };
   }
 
+  // Defense in depth: never persist a GitHub token in the durable events log, even
+  // if a bot's reply (last_assistant_message) somehow echoed one. Scrub the
+  // serialized line (gh classic/fine-grained PAT shapes). Idempotent, non-lossy.
+  const GH_TOKEN_RE = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
   const line =
     JSON.stringify({
       event: eventName,
       ts: new Date().toISOString(),
       payload,
-    }) + '\n';
+    }).replace(GH_TOKEN_RE, '[REDACTED:gh-token]') + '\n';
 
   try {
     await mkdir(dirname(eventsPath), { recursive: true });

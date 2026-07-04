@@ -14,6 +14,7 @@ import {
   SHARED_CATEGORY_NAME,
 } from '../bots/registry.js';
 import type { Bot } from '../bots/types.js';
+import { registerGuildCommands } from './commands.js';
 
 /**
  * Creates the discord.js Client with the intents the butler needs:
@@ -143,6 +144,14 @@ export function initClient(client: Client): void {
         await ensureChannels(guild);
       } catch (err) {
         console.error(`[discord] failed to ensure channels in guild ${guild.id}:`, err);
+      }
+      // Slash commands (/github-token …) — guild-scoped so they appear instantly.
+      // Independent of channel setup so one failing doesn't block the other. Requires
+      // the bot invite to include the `applications.commands` OAuth scope.
+      try {
+        await registerGuildCommands(guild);
+      } catch (err) {
+        console.error(`[discord] failed to register slash commands in ${guild.id}:`, err);
       }
     }
   });

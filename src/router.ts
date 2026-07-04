@@ -32,7 +32,14 @@ export function findBotForChannel(channelName: string | null | undefined): Bot |
  * author derivation, so a user can never be routed into another user's window.
  */
 export function conversationKey(bot: Bot, userId: string, threadId?: string): string {
-  if (bot.threadPerMessage && threadId) return `${bot.id}__thread_${threadId}`;
+  if (bot.threadPerMessage && threadId) {
+    const base = `${bot.id}__thread_${threadId}`;
+    // A perUserGitHubAuth bot combines the userId into the thread key so two users
+    // can never share a window (= the same injected token) — a structural block on
+    // token leakage that doesn't rely on the private-thread ACL. botId extraction
+    // (`split('__')[0]`) and `__thread_<id>` matching still work.
+    return bot.perUserGitHubAuth ? `${base}__u${userId}` : base;
+  }
   return bot.shared ? `${bot.id}__${userId}` : bot.id;
 }
 

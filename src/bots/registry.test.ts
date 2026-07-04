@@ -2,18 +2,43 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { bots } from './registry.js';
 
-it('registry has eight bots', () => {
+it('registry has eleven bots', () => {
   const ids = bots.map((b) => b.id).sort();
   assert.deepEqual(ids, [
     'ask',
+    'code-review',
     'counseling',
     'finance',
+    'github',
+    'github-issue',
     'planning',
     'research',
     'resume',
     'saju',
     'travel',
   ]);
+});
+
+it('the three GitHub bots are perUserGitHubAuth + gatedShell, gated-run-only', () => {
+  for (const id of ['github', 'github-issue', 'code-review']) {
+    const b = bots.find((x) => x.id === id)!;
+    assert.equal(b.perUserGitHubAuth, true, `${id} perUserGitHubAuth`);
+    assert.equal(b.gatedShell, true, `${id} gatedShell`);
+    assert.equal(b.shared, true, `${id} shared (userId in key → token isolation)`);
+    // Shell access is ONLY the gated-run.sh (via the {{SCRIPTS_DIR}} placeholder).
+    const bashTools = b.allowedTools.filter((t) => t.startsWith('Bash('));
+    assert.ok(bashTools.length > 0, `${id} has a gated shell`);
+    assert.ok(
+      bashTools.every((t) => t.includes('gated-run.sh') || t.includes('sereview-run.sh')),
+      `${id} shell is gated-run/sereview-run only`,
+    );
+  }
+});
+
+it('only issue-solving + code-review may execute repo code (owner-gated); issue-creation may not', () => {
+  assert.equal(bots.find((b) => b.id === 'github')!.allowRepoCodeExec, true);
+  assert.equal(bots.find((b) => b.id === 'code-review')!.allowRepoCodeExec, true);
+  assert.notEqual(bots.find((b) => b.id === 'github-issue')!.allowRepoCodeExec, true);
 });
 
 it('every bot is fully defined', () => {
