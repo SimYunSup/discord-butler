@@ -19,6 +19,11 @@ the completed reply back. Adding a bot is adding one config object.
 | 여행 (Travel) | `#여행` | Destination·dates·budget → day-by-day itinerary | task |
 | 사주·점성 (Saju) | `#사주` | Korean saju + astrology daily readings; stores a birth chart per user (shared, per-user private threads). For fun / self-reflection. | companion |
 | 금융 (Finance) | `#금융` | Evidence-first personal-finance/investment chat; persists a financial snapshot and updates it on session end. *Not investment advice.* | task |
+| GitHub 이슈해결 (Issue solver) | `#github-이슈해결` | Reads an issue, clones the repo, fixes it on a branch, and opens a PR — all under **the user's own GitHub token**. `git push` / builds go through a Discord approval button. | companion |
+| GitHub 이슈 만들기 (Issue creation) | `#github-이슈만들기` | Turns a rough description into a well-formed issue and files it (`gh issue create`, approval-gated). Never touches repo files. | task |
+| GitHub 코드리뷰 (Code review) | `#github-코드리뷰` | Reviews a PR (deterministic [`sereview`](https://www.npmjs.com/package/sereview) packet, no API key) and attaches a `.md` report. Comment posting is approval-gated. | task |
+
+The three GitHub bots share a per-user-token security model — see **[GitHub bots](#github-bots)** below.
 
 ## How it works
 
@@ -101,6 +106,55 @@ talks to Claude — and it rides the same Codex auth, so it needs a Codex plan.
 > non-interactive plugin activation via `--plugin-dir` (no `/plugin install` /
 > `/codex:setup` prompt) is unconfirmed. Treat the `codex` backend as a draft
 > scaffold, not a supported path — see the disclaimer in `src/agents/codex.ts`.
+
+## GitHub bots
+
+`#github-이슈해결`, `#github-이슈만들기`, `#github-코드리뷰` let **each user act under
+their own GitHub identity**. There is no shared/host token — a user registers their
+own PAT and every commit, PR, issue, and comment goes out as *them*.
+
+**Onboarding.** Run the ephemeral slash command in Discord:
+
+```
+/github-token token:<your PAT>
+```
+
+- Use a **classic PAT** with the `repo` scope (org repos also need that token
+  SSO-authorized for the org). The reply is ephemeral, so the token never lands in
+  channel history.
+- It's validated with `gh api user`, then stored at
+  `$BUTLER_DATA_DIR/secrets/github/<discordUserId>.json` (mode `0600`, outside every
+  conversation workspace). Remove it with `/github-token-remove`.
+- With **no token registered the bot won't even launch** its window — a missing
+  token can never silently fall back to the host's `gh` login.
+
+**How the token flows.** At window launch the bridge injects that user's PAT +
+`GIT_AUTHOR/COMMITTER_*` as the tmux window's env only (never a file in the
+workspace, never symlinked). The conversation key embeds the Discord user id, so two
+users can never share a window / workspace / token.
+
+**The approval gate.** These bots' only shell is `scripts/gated-run.sh`. Read-only
+commands (`gh issue view`, `git clone`, `git commit`) run immediately; **destructive
+ones block** until a Discord **✅ 승인 / 🚫 거부** button decides:
+
+| Command class | Who can approve |
+|---|---|
+| `git push`, `gh issue create`, `gh pr review/comment` | the **requesting user** (their own token) *or* the owner |
+| Code execution (`npx`, `node`, `cargo test`, …) on `allowRepoCodeExec` bots | **owner only** — running a cloned repo's own code is an RCE vector, so the requester can't self-approve it |
+
+The gate is a file handshake (an `Approval` event → the bridge posts buttons → the
+click writes a decision file `gated-run.sh` is polling), with a 300 s timeout. On the
+issue-creation bot code execution is not permitted at all (gh reads/creates only).
+
+**Host setup (one-time).**
+
+1. Invite the bot with the **`applications.commands`** OAuth scope, or the slash
+   command won't appear.
+2. Set `OWNER_DISCORD_ID` (approves code-execution gates).
+3. Run **`gh auth setup-git`** once on the host so `git push` uses the per-window
+   `GH_TOKEN` credential helper.
+4. For code review, `sereview` is fetched on demand via `npx`; install it globally
+   (`npm i -g sereview`) to avoid the round-trip.
 
 ## Layout
 

@@ -1,8 +1,27 @@
 import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 import type { Bot } from '../bots/types.js';
 import type { AgentBackend } from '../agents/types.js';
 import { readSkillContent } from './skills.js';
+
+/** Absolute path to the repo's `scripts/` dir (src/claude/ → repo root → scripts). */
+function scriptsDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, '..', '..', 'scripts');
+}
+
+/**
+ * Returns a shallow copy of the bot with the `{{SCRIPTS_DIR}}` placeholder in its
+ * persona and allowedTools replaced by the absolute `scripts/` dir. Gated bots
+ * reference their shell scripts (gated-run.sh, sereview-run.sh) via the
+ * placeholder so the repo stays portable — the deploy path isn't hardcoded.
+ */
+export function resolveScriptPlaceholders(bot: Bot): Bot {
+  const dir = scriptsDir();
+  const sub = (s: string): string => s.replace(/\{\{SCRIPTS_DIR\}\}/g, dir);
+  return { ...bot, persona: sub(bot.persona), allowedTools: bot.allowedTools.map(sub) };
+}
 
 /**
  * Builds and returns the absolute working directory for a conversation key,
@@ -203,10 +222,13 @@ export async function ensureWorkspace(
     if (content) skillSections.push(content);
   }
 
-  await writeFile(join(cwd, backend.instructionsFile), renderClaudeMd(bot, skillSections), 'utf8');
+  // Substitute the {{SCRIPTS_DIR}} placeholder (gated bots reference their shell
+  // scripts by it) into the persona + allowedTools before rendering.
+  const rbot = resolveScriptPlaceholders(bot);
+  await writeFile(join(cwd, backend.instructionsFile), renderClaudeMd(rbot, skillSections), 'utf8');
   await writeFile(
     join(claudeDir, 'settings.json'),
-    renderSettingsJson(bot, hookScriptPath, eventsPath),
+    renderSettingsJson(rbot, hookScriptPath, eventsPath),
     'utf8',
   );
 

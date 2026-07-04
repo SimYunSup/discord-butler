@@ -2,6 +2,7 @@ import {
   ChannelType,
   Events,
   MessageFlags,
+  type ButtonInteraction,
   type Channel,
   type Client,
   type GuildMember,
@@ -13,8 +14,16 @@ import {
 } from 'discord.js';
 import { isEndCommand, type Bridge } from '../bridge.js';
 import type { Bot } from '../bots/types.js';
+import { bots } from '../bots/registry.js';
 import { conversationKey, findBotForChannel } from '../router.js';
-import { postChunked, postReply, SELECT_CUSTOM_ID } from './post.js';
+import { handleChatInputCommand } from './commands.js';
+import {
+  parseGateButton,
+  postApprovalButtons,
+  postChunked,
+  postReply,
+  SELECT_CUSTOM_ID,
+} from './post.js';
 
 /**
  * Resolves the channel name used for routing. For a thread, routing matches the
@@ -186,13 +195,89 @@ export function registerHandler(client: Client, bridge: Bridge): void {
       console.error('[handler] error while handling message:', err);
     });
   });
-  // Select-menu clicks (the bot's choice UI) → feed the picked option back as a turn.
   client.on(Events.InteractionCreate, (interaction) => {
-    if (!interaction.isStringSelectMenu() || interaction.customId !== SELECT_CUSTOM_ID) return;
-    void handleSelect(interaction, bridge).catch((err) => {
-      console.error('[handler] error while handling select interaction:', err);
-    });
+    // Slash commands: /github-token* are ephemeral token onboarding.
+    if (interaction.isChatInputCommand()) {
+      void handleChatInputCommand(interaction, bridge).catch((err) =>
+        console.error('[handler] error while handling chat-input command:', err),
+      );
+      return;
+    }
+    // Select-menu clicks (the bot's choice UI) → feed the picked option back as a turn.
+    if (interaction.isStringSelectMenu() && interaction.customId === SELECT_CUSTOM_ID) {
+      void handleSelect(interaction, bridge).catch((err) => {
+        console.error('[handler] error while handling select interaction:', err);
+      });
+      return;
+    }
+    // Gated-command Approve/Deny buttons (risky GitHub bots).
+    if (interaction.isButton() && parseGateButton(interaction.customId)) {
+      void handleGateButton(interaction, bridge).catch((err) => {
+        console.error('[handler] error while handling gate button:', err);
+      });
+    }
   });
+}
+
+/**
+ * Whether `clickerId` may decide a gated command for conversation `key`.
+ *
+ * - The owner (OWNER_DISCORD_ID) may always approve.
+ * - For a perUserGitHubAuth bot, the REQUESTING user (the window's stored authorId)
+ *   may self-approve their own push/issue/comment — they act under their own token.
+ * - Code-execution gates (requireOwner, marked by gated-run.sh) are OWNER-ONLY even
+ *   on a perUserGitHubAuth bot: the requester must not self-approve running a cloned
+ *   repo's code (RCE on the host).
+ *
+ * botId is the part of the key before `__` (router's conversationKey scheme).
+ */
+export function canApproveGate(
+  key: string,
+  clickerId: string,
+  ownerId: string | undefined,
+  authorId: string | undefined,
+  requireOwner = false,
+): boolean {
+  if (ownerId && clickerId === ownerId) return true;
+  if (requireOwner) return false;
+  const botId = key.split('__')[0] ?? key;
+  const bot = bots.find((b) => b.id === botId);
+  if (bot?.perUserGitHubAuth && authorId && clickerId === authorId) return true;
+  return false;
+}
+
+/**
+ * Handles a click on a gated-command Approve/Deny button. Writes the decision file
+ * gated-run.sh is polling, then disables the buttons. Owner may always decide; a
+ * perUserGitHubAuth requester may decide their OWN (non-code-exec) gate.
+ */
+async function handleGateButton(interaction: ButtonInteraction, bridge: Bridge): Promise<void> {
+  const parsed = parseGateButton(interaction.customId);
+  if (!parsed) return;
+  const entry = await bridge.sessionStore.get(parsed.key);
+  const requireOwner = await bridge.requiresOwnerApproval(parsed.key, parsed.reqId);
+  if (
+    !canApproveGate(
+      parsed.key,
+      interaction.user.id,
+      process.env.OWNER_DISCORD_ID,
+      entry?.authorId,
+      requireOwner,
+    )
+  ) {
+    await interaction
+      .reply({
+        content: requireOwner
+          ? '코드 실행은 소유자만 승인할 수 있어요.'
+          : '승인 권한이 없어요 (요청자 본인 또는 소유자만).',
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => undefined);
+    return;
+  }
+  await bridge.writeApprovalDecision(parsed.key, parsed.reqId, parsed.kind);
+  const label = parsed.kind === 'approve' ? '✅ 승인됨 — 실행합니다.' : '🚫 거부됨 — 중단합니다.';
+  await interaction.update({ content: label, components: [] }).catch(() => undefined);
 }
 
 /**
@@ -241,8 +326,14 @@ async function handleSelect(interaction: StringSelectMenuInteraction, bridge: Br
         onReply: (reply, files) => postReply(channel, reply, files),
         onNotification: (notif, notifType) =>
           postChunked(channel, `🔔 ${bot.displayName}: ${notif}${notifType ? ` [${notifType}]` : ''}`),
+        onApproval: async (cmd, gateKey, reqId) => {
+          // Owner-only gates (code execution) ping the owner so they come approve.
+          const ownerOnly = await bridge.requiresOwnerApproval(gateKey, reqId);
+          await postApprovalButtons(channel, cmd, gateKey, reqId, ownerOnly ? process.env.OWNER_DISCORD_ID : undefined);
+        },
       },
       [],
+      { authorId: interaction.user.id },
     );
   } finally {
     clearInterval(typingTimer);
@@ -350,8 +441,14 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
         onReply: (reply, files) => postReply(replyChannel, reply, files),
         onNotification: (notif, notifType) =>
           postChunked(replyChannel, `🔔 ${bot.displayName}: ${notif}${notifType ? ` [${notifType}]` : ''}`),
+        onApproval: async (cmd, gateKey, reqId) => {
+          // Owner-only gates (code execution) ping the owner so they come approve.
+          const ownerOnly = await bridge.requiresOwnerApproval(gateKey, reqId);
+          await postApprovalButtons(replyChannel, cmd, gateKey, reqId, ownerOnly ? process.env.OWNER_DISCORD_ID : undefined);
+        },
       },
       attachments,
+      { authorId: message.author.id },
     );
     if (botUserId) {
       void message.reactions.resolve('⏳')?.users.remove(botUserId).catch(() => undefined);

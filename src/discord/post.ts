@@ -1,5 +1,7 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   MessageFlags,
   StringSelectMenuBuilder,
@@ -153,6 +155,54 @@ export async function postReply(
   if (hasFiles) {
     await channel.send({ files: files!.map((f) => ({ attachment: f.data, name: f.name })) });
   }
+}
+
+/** customId prefixes for the gated-command approval buttons. */
+const GATE_APPROVE = 'gate-approve';
+const GATE_DENY = 'gate-deny';
+
+/**
+ * Posts Approve/Deny buttons for a gated command awaiting approval.
+ *
+ * When `mentionUserId` is given (owner-only gates — e.g. code execution, which
+ * only the owner may approve), the message pings that user so they're called over
+ * to approve instead of the request silently timing out. Self-approvable gates
+ * (git push / issue create) pass no mention.
+ */
+export async function postApprovalButtons(
+  channel: SendableChannels,
+  cmd: string,
+  key: string,
+  reqId: string,
+  mentionUserId?: string,
+): Promise<void> {
+  const suffix = `${key}:${reqId}`;
+  const approve = new ButtonBuilder()
+    .setCustomId(`${GATE_APPROVE}:${suffix}`)
+    .setLabel('승인')
+    .setStyle(ButtonStyle.Success);
+  const deny = new ButtonBuilder()
+    .setCustomId(`${GATE_DENY}:${suffix}`)
+    .setLabel('거부')
+    .setStyle(ButtonStyle.Danger);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approve, deny);
+  const shown = cmd.length > 1500 ? `${cmd.slice(0, 1500)}…` : cmd;
+  const ping = mentionUserId ? `<@${mentionUserId}> ` : '';
+  const ownerNote = mentionUserId ? ' (코드 실행은 소유자 승인이 필요해요)' : '';
+  await channel.send({
+    content: `${ping}🔐 **승인 필요**${ownerNote} — 실행할 명령:\n\`\`\`\n${shown}\n\`\`\``,
+    components: [row],
+    ...(mentionUserId ? { allowedMentions: { users: [mentionUserId] } } : {}),
+  });
+}
+
+/** Parses a gate button customId → { kind, key, reqId }, or null if not one. */
+export function parseGateButton(
+  customId: string,
+): { kind: 'approve' | 'deny'; key: string; reqId: string } | null {
+  const m = customId.match(/^gate-(approve|deny):([^:]+):(.+)$/);
+  if (!m) return null;
+  return { kind: m[1] as 'approve' | 'deny', key: m[2]!, reqId: m[3]! };
 }
 
 /**

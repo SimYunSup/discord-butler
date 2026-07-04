@@ -20,6 +20,14 @@ export interface SessionEntry {
    * drives the periodic memory.md refresh nudge. Absent for task-mode bots.
    */
   turnCount?: number;
+  /**
+   * For perUserGitHubAuth bots: the Discord id of the user this window/workspace
+   * belongs to. Recorded on the first turn and checked on later turns — if a
+   * different author reaches the same key (a bug/legacy), the bridge refuses rather
+   * than run under someone else's injected token. Also lets a gate-approval button
+   * grant self-approval to the requesting user (see canApproveGate).
+   */
+  authorId?: string;
 }
 
 /** The whole session map: conversationKey → entry. */

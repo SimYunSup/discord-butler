@@ -178,4 +178,34 @@ export interface Bot {
    * logged and the window is killed anyway.
    */
   flushOnEnd?: string;
+  /**
+   * Risky bot whose ONLY shell access is scripts/gated-run.sh (set in allowedTools
+   * via the `{{SCRIPTS_DIR}}` placeholder). Destructive commands (push / repo
+   * create / issue create / PR comment / code execution) block until a Discord
+   * button approves them (events + data/approvals/ handshake). Forces the `claude`
+   * backend (no fallback engines) since the gate + token injection assume it.
+   */
+  gatedShell?: boolean;
+  /**
+   * Per-user GitHub identity bot. When true, the bridge injects THIS user's stored
+   * PAT (data/secrets/github/<userId>.json) into the tmux window's env at launch
+   * (GH_TOKEN/GIT_*), and HARD-GATES the launch when no token is registered (so a
+   * missing token can never fall back to the host's gh login). Pairs with `shared`
+   * (the conversationKey embeds the userId, so two users can never share a window /
+   * workspace / token). Approval buttons for these bots route to the requesting
+   * user for self-approvable gates (see canApproveGate).
+   */
+  perUserGitHubAuth?: boolean;
+  /**
+   * Allow this (gated) bot to run code-execution shells (node/npx/deno/bun/cargo…)
+   * in addition to gh/git. The bridge injects `BUTLER_ALLOW_CODE_EXEC=1` into the
+   * window so gated-run.sh keeps those bins in its allowlist. They still ALWAYS hit
+   * the Discord approval gate, and — because running a cloned repo's own code is an
+   * RCE vector on the host — that approval is OWNER-ONLY even on a perUserGitHubAuth
+   * bot (the requester can NOT self-approve code execution; see canApproveGate +
+   * gated-run.sh's `.owner` marker). git push / issue approvals stay self-approvable.
+   * Intended for issue-solving + code-review, which legitimately need builds/tests.
+   * Leave unset for issue-creation (no execution).
+   */
+  allowRepoCodeExec?: boolean;
 }
