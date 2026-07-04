@@ -5,6 +5,7 @@ import { parseFileBlock, type OutgoingFile } from './discord/post.js';
 import type { ButlerConfig } from './config.js';
 import type { Bot } from './bots/types.js';
 import { githubTokenEnv } from './bots/github-token.js';
+import { redactPII } from './redact.js';
 import { resolveModelTier } from './bots/model-escalation.js';
 import { TmuxManager } from './tmux/manager.js';
 import { SessionMapStore } from './persistence/session-map.js';
@@ -344,6 +345,10 @@ export class Bridge {
             ? '⚠️ 파일을 첨부하려 했지만 전송하지 못했어요 (경로가 작업공간 밖이거나 파일이 없음). 파일을 `./output/` 아래에 저장한 뒤 다시 시도해 주세요.'
             : '⚠️ 빈 응답을 받았어요. 다시 한 번 요청해 주세요.';
         }
+        // PII masking (redact:true bots). scope 'post' masks the delivered body
+        // (awaited); scope 'log' (default) leaves the reply intact and just flags PII
+        // on the server-log observation surface off the reply path.
+        finalText = await this.applyRedact(bot, key, finalText);
         await cb.onReply(finalText, files.length ? files : undefined);
 
         if (bot.memoryMode === 'companion') {
@@ -392,6 +397,43 @@ export class Bridge {
     } catch (err) {
       console.error('[bridge] flushBeforeEnd failed (ending anyway):', err);
     }
+  }
+
+  /**
+   * PII masking for a `redact:true` bot's OUTBOUND reply (src/redact.ts). Never
+   * throws — a redaction failure must never drop a reply, so any error returns the
+   * original text.
+   *
+   * - `'post'`: mask the discord-bound body itself → awaited before delivery (public
+   *   bots only). Returns the masked text.
+   * - `'log'` (default): the reply stays ORIGINAL (a counselor needs the real
+   *   details); we compute the masked copy OFF the reply path (non-blocking, Ollama
+   *   latency hidden) and just log the hit count on the server observation surface.
+   */
+  private async applyRedact(bot: Bot, key: string, text: string): Promise<string> {
+    if (!bot.redact || !text) return text;
+    const scope = bot.redactScope ?? 'log';
+    if (scope === 'post') {
+      try {
+        const { text: masked } = await redactPII(text);
+        return masked;
+      } catch (err) {
+        console.error(`[redact] ${key}: masking failed (delivering original):`, err);
+        return text;
+      }
+    }
+    // 'log': off the reply path so Ollama latency never delays the user.
+    void redactPII(text)
+      .then(({ hits }) => {
+        if (hits > 0) {
+          console.warn(
+            `[redact] ${key}: masked ${hits} PII item(s) in observation copy ` +
+              '(scope=log; user reply & workspace files unchanged)',
+          );
+        }
+      })
+      .catch(() => {});
+    return text;
   }
 
   /**

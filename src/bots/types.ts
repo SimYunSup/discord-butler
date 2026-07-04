@@ -208,4 +208,21 @@ export interface Bot {
    * Leave unset for issue-creation (no execution).
    */
   allowRepoCodeExec?: boolean;
+  /**
+   * PII-masking bot (sensitive 상담 등). When true the bridge runs the redact filter
+   * (src/redact.ts) on this bot's OUTBOUND reply. Scope is controlled by
+   * {@link redactScope} (default 'log'). Off ⇒ the redact filter never touches this
+   * bot (100% unchanged).
+   */
+  redact?: boolean;
+  /**
+   * How far redaction reaches when {@link redact} is true:
+   * - `'log'` (default): the user reply and workspace files stay ORIGINAL; only the
+   *   masked copy on the platform's observation surface (server console) is affected,
+   *   computed OFF the reply path so Ollama latency never delays the reply. Preserves
+   *   private-thread utility (a counselor needs the real details in the reply).
+   * - `'post'`: the discord-bound reply body itself is masked (public-channel bots
+   *   only; unsuitable for 상담). Inbound text to claude is never masked either way.
+   */
+  redactScope?: 'log' | 'post';
 }

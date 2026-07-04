@@ -231,6 +231,12 @@ The core reads the registry generically — no special-casing per bot.
   interactive menus; nothing destructive is permitted by default.
 - The 금융 / 사주 bots are general-purpose assistants — **not** professional
   financial, medical, or legal advice.
+- **PII redaction:** bots marked `redact: true` (e.g. 상담) mask email / phone /
+  주민번호 / card / account in their reply's observation copy with a local regex.
+  Default scope `'log'` keeps the reply + `memory.md` intact (a counselor needs the
+  real details) and only flags PII on the server log; set `OLLAMA_HOST` to also mask
+  names/addresses (extraction-only, so a small model can't corrupt the text). See
+  `src/redact.ts`.
 
 ## License
 

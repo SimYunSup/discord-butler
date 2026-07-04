@@ -204,6 +204,10 @@ const counseling: Bot = {
   effort: 'high',
   shared: false,
   memoryMode: 'companion',
+  // PII masking (default 'log' scope): the reply & memory.md stay original (a
+  // counselor needs the real details); only the server-log observation copy is
+  // masked. With OLLAMA_HOST set, names/addresses are masked too; else regex-only.
+  redact: true,
   // On /end, fold this session's context into memory.md before the window is killed
   // so it survives into the next conversation.
   flushOnEnd:

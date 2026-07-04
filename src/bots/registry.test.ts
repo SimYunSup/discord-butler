@@ -63,6 +63,7 @@ it('counseling and resume are personal (solo-use) bots', () => {
   assert.notEqual(counseling!.threadPerMessage, true);
   assert.equal(counseling!.memoryMode, 'companion');
   assert.ok(counseling!.flushOnEnd, 'counseling flushes memory.md on /end');
+  assert.equal(counseling!.redact, true, 'counseling masks PII on the observation surface');
 
   const resume = bots.find((b) => b.id === 'resume');
   assert.equal(resume!.shared, false);
