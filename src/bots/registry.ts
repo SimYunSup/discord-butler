@@ -123,6 +123,14 @@ const finance: Bot = {
   shared: false,
   memoryMode: 'task',
   sharedRefs: ['finance'],
+  // OPTIONAL weekly market-brief (scripts/finance-brief/*): when the localhost trigger
+  // server is enabled and the launchd job runs the pipeline, POST /trigger/finance wakes
+  // this bot with the prompt below. It reads the qlib signal file the pipeline wrote
+  // (finance/시장브리핑-latest.md) and posts a briefing into a fresh thread. Harmless if
+  // unused — normal in-channel chat ignores triggerPrompt/triggerInThread.
+  triggerPrompt:
+    '주간 시장 브리핑을 작성해 이 채널에 올려라. (1) 워크스페이스의 finance/시장브리핑-latest.md(qlib 모델의 섹터 로테이션·상위/하위 종목 신호)를 Read하라. (2) 코스피·나스닥·S&P500·금·미국채·환율의 이번 주 시황을 WebSearch로 확인하라. (3) 네 재무현황 파일에 목표 배분이 있으면 드리프트·리밸런싱도 짚어라(없으면 시황+신호만). 모델 신호는 IC가 낮은 참고 입력임을 명시하고, 근거·출처를 붙여 네 원칙(근거 우선·권유 아님)대로 간결히. 파일이 없으면 그 사실만 알리고 시황만 전하라.',
+  triggerInThread: true,
   flushOnEnd:
     '[시스템] 세션을 종료합니다. 사용자에게 답하지 말고, 이번 세션에서 새로 알게 됐거나 바뀐 금융 정보(자산·계좌·소득/지출·목표·결정)를 finance/재무현황.md 에 빠짐없이 반영·갱신한 뒤 "저장완료"만 답하세요. 추측으로 채우지 말 것.',
   usage: '재무·투자 상담. 절세계좌·자산배분·세금에 더해 섹터·종목 방향성도 근거·출처와 함께 제시해요. ※ 투자 권유가 아닌 정보 제공입니다. · 대화 초기화: /end',

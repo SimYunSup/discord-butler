@@ -172,6 +172,20 @@ export interface Bot {
    */
   triggerPrompt?: string;
   /**
+   * When true, a {@link triggerPrompt} run posts its reply into a NEW thread off the
+   * bot's channel (named after the bot + date) instead of the channel itself — keeps a
+   * recurring push (e.g. the weekly finance briefing) tidy. Only affects triggered runs;
+   * normal in-channel messages are unaffected. No-op if the channel can't hold threads.
+   */
+  triggerInThread?: boolean;
+  /**
+   * When true, this bot only answers in its MAIN channel if it is @-mentioned
+   * (tagged). Inside its own thread (threadPerMessage) it answers normally without a
+   * tag. For a shared, chatty channel where the bot shouldn't reply to every message.
+   * Default (unset) = answer every message in the channel, as before.
+   */
+  requireMention?: boolean;
+  /**
    * When set, on an end-session command the bridge sends THIS prompt to the
    * (still-alive) window and waits for one Stop BEFORE killing it — so the bot
    * flushes pending state to disk on session end. Best-effort: a failure is

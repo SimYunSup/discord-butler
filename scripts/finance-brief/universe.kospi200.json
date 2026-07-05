@@ -1,0 +1,20 @@
+{
+  "asof": "2026-07-05",
+  "instruments": [
+    { "symbol": "005930", "name": "삼성전자", "sector": "TECH" },
+    { "symbol": "000660", "name": "SK하이닉스", "sector": "TECH" },
+    { "symbol": "035420", "name": "NAVER", "sector": "TECH" },
+    { "symbol": "035720", "name": "카카오", "sector": "TECH" },
+    { "symbol": "373220", "name": "LG에너지솔루션", "sector": "ENERGY" },
+    { "symbol": "051910", "name": "LG화학", "sector": "ENERGY" },
+    { "symbol": "006400", "name": "삼성SDI", "sector": "ENERGY" },
+    { "symbol": "207940", "name": "삼성바이오로직스", "sector": "BIO" },
+    { "symbol": "068270", "name": "셀트리온", "sector": "BIO" },
+    { "symbol": "005380", "name": "현대차", "sector": "CONS" },
+    { "symbol": "000270", "name": "기아", "sector": "CONS" },
+    { "symbol": "012330", "name": "현대모비스", "sector": "CONS" },
+    { "symbol": "105560", "name": "KB금융", "sector": "FIN" },
+    { "symbol": "055550", "name": "신한지주", "sector": "FIN" },
+    { "symbol": "086790", "name": "하나금융지주", "sector": "FIN" }
+  ]
+}

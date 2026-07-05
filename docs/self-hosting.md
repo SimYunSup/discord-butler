@@ -347,3 +347,55 @@ and is **not** touched by updates. Back that directory up if it matters to you.
 
 See the main [README](../README.md) for architecture and how to add a bot.
 아키텍처와 봇 추가 방법은 [README](../README.md) 참고.
+
+---
+
+## 11. Optional: weekly finance market-brief (qlib) / 선택: 주간 시장 브리핑
+
+The `finance` bot can post a **weekly market brief** built from a small local
+quant pipeline (`scripts/finance-brief/`): daily KOSPI candles → qlib
+(Alpha158 + LightGBM) → a relative-strength signal file → a briefing posted into
+a fresh thread. This is **entirely optional and off by default** — the bot works
+as a normal chat bot without any of it.
+
+> **Reference signal only.** The model's information coefficient (IC) is low, so
+> the output is a *relative-ranking hint*, not a prediction. Treat it as one small
+> input, never a buy/sell call.
+
+**Prerequisites**
+
+1. **Toss Securities Open API creds** in `.env` (quote read only, no orders):
+   ```
+   TOSSINVEST_CLIENT_ID=...
+   TOSSINVEST_CLIENT_SECRET=...
+   ```
+   and install the runtime client: `pnpm add toss-securities`.
+2. **The localhost trigger server** enabled — set `BUTLER_TRIGGER_TOKEN` (and
+   optionally `BUTLER_HTTP_PORT`, default 8787) in `.env` (see Step 6).
+3. **A Python 3.11 venv** for qlib (needs `uv` + `libomp`; qlib requires 3.11, not 3.13):
+   ```bash
+   bash scripts/finance-brief/setup-venv.sh
+   ```
+
+**Run it weekly**
+
+Install the launchd template so the pipeline runs Mon–Fri 08:00 KST (the script's
+own gate only proceeds on the week's first trading day; holidays roll forward):
+
+```bash
+sed -e "s/YOUR_USERNAME/$(whoami)/g" \
+  scripts/com.discordbutler.finance-brief.daemon.plist \
+  | sudo tee /Library/LaunchDaemons/com.discordbutler.finance-brief.plist >/dev/null
+sudo chown root:wheel /Library/LaunchDaemons/com.discordbutler.finance-brief.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.discordbutler.finance-brief.plist
+```
+
+To test the pipeline once by hand: `bash scripts/finance-brief/run-weekly.sh`.
+
+`finance` 봇은 소형 로컬 퀀트 파이프라인(`scripts/finance-brief/`: KOSPI 일봉 → qlib
+Alpha158+LightGBM → 상대강도 신호 → 스레드 게시)으로 **주간 시장 브리핑**을 올릴 수 있습니다.
+**완전 선택이며 기본은 꺼져 있습니다** — 없어도 봇은 평범한 채팅 봇으로 동작합니다. 모델 IC가
+낮아 **예측이 아닌 참고용 상대 랭킹**입니다. 사전 준비: (1) `.env`에 `TOSSINVEST_CLIENT_ID/SECRET`
+(시세 조회 전용) + `pnpm add toss-securities`, (2) 로컬 트리거 서버(`BUTLER_TRIGGER_TOKEN`),
+(3) Python 3.11 venv(`bash scripts/finance-brief/setup-venv.sh`). 그 뒤 위 launchd 템플릿을 설치하면
+매주 첫 개장일 아침에 실행됩니다.

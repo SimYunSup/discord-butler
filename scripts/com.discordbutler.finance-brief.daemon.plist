@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  OPTIONAL LaunchDaemon TEMPLATE for the weekly finance market-brief (macOS).
+  Runs run-weekly.sh Mon–Fri 08:00; the script's own gate only proceeds on the
+  week's FIRST trading day (holidays roll to the next open day).
+
+  This is a TEMPLATE — replace the placeholders before installing:
+    - YOUR_USERNAME : the macOS user that owns the repo (e.g. `whoami`).
+    - The repo is assumed at "$HOME/discord-butler"; adjust the paths if it lives
+      elsewhere. launchd does NOT expand env vars in StandardOutPath/ErrorPath, so
+      those must be absolute — swap YOUR_USERNAME there too.
+
+  Install (macOS):
+    sed -e "s/YOUR_USERNAME/$(whoami)/g" \
+      scripts/com.discordbutler.finance-brief.daemon.plist \
+      | sudo tee /Library/LaunchDaemons/com.discordbutler.finance-brief.plist >/dev/null
+    sudo chown root:wheel /Library/LaunchDaemons/com.discordbutler.finance-brief.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.discordbutler.finance-brief.plist
+
+  Prereqs: scripts/finance-brief/setup-venv.sh run once (.venv + dump_bin.py),
+  .env with TOSSINVEST_CLIENT_ID/SECRET + BUTLER_TRIGGER_TOKEN, and the bridge running.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.discordbutler.finance-brief</string>
+  <key>UserName</key><string>YOUR_USERNAME</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/discord-butler/scripts/finance-brief/run-weekly.sh"</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>HOME</key><string>/Users/YOUR_USERNAME</string></dict>
+  <key>StandardOutPath</key><string>/Users/YOUR_USERNAME/discord-butler/finance-brief-cron.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOUR_USERNAME/discord-butler/finance-brief-cron.log</string>
+</dict>
+</plist>

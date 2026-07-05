@@ -219,3 +219,22 @@ export function findTextChannelByName(client: Client, name: string): SendableCha
   }
   return undefined;
 }
+
+/**
+ * Like {@link findTextChannelByName} but tolerant of a COLD channel cache. Right after a
+ * bridge restart, a low-traffic channel (e.g. #금융) may not be cached yet, so a trigger
+ * firing immediately after redeploy would find nothing and drop the reply. On a cache
+ * miss this fetches each guild's channels once and retries — so scheduled/triggered posts
+ * land even when no message has warmed the cache.
+ */
+export async function findTextChannelByNameAsync(
+  client: Client,
+  name: string,
+): Promise<SendableChannels | undefined> {
+  const cached = findTextChannelByName(client, name);
+  if (cached) return cached;
+  for (const guild of client.guilds.cache.values()) {
+    await guild.channels.fetch().catch(() => undefined);
+  }
+  return findTextChannelByName(client, name);
+}

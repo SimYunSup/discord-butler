@@ -1,0 +1,6 @@
+pyqlib==0.9.7
+lightgbm
+fire
+loguru
+pandas
+numpy

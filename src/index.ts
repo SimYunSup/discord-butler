@@ -1,8 +1,9 @@
 import type { SendableChannels } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import { loadConfig } from './config.js';
 import { createClient, initClient } from './discord/client.js';
 import { closeThread, registerHandler } from './discord/handler.js';
-import { findTextChannelByName, postReply } from './discord/post.js';
+import { findTextChannelByName, findTextChannelByNameAsync, postReply } from './discord/post.js';
 import { Bridge } from './bridge.js';
 import { startTriggerServer } from './http.js';
 import { conversationKey } from './router.js';
@@ -36,7 +37,25 @@ async function main(): Promise<void> {
   const triggerServer = startTriggerServer(config, {
     trigger: async (bot, prompt) => {
       const key = conversationKey(bot, 'trigger'); // personal bot → key === bot.id
-      const channel = findTextChannelByName(client, bot.channelName);
+      // Async: fetch channels on a cache miss so a trigger right after restart still posts
+      // into a low-traffic channel (e.g. #금융).
+      let channel = await findTextChannelByNameAsync(client, bot.channelName);
+      // triggerInThread: post the briefing into a fresh thread (e.g. weekly finance brief)
+      // so the channel stays tidy. Best-effort — on failure fall back to the channel.
+      if (channel && bot.triggerInThread && channel.type === ChannelType.GuildText) {
+        const kstDate = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        const thread = await channel.threads
+          .create({
+            name: `📊 ${bot.displayName} — ${kstDate}`,
+            autoArchiveDuration: 1440,
+            type: ChannelType.PublicThread,
+          })
+          .catch((err) => {
+            console.warn(`[trigger] thread create failed #${bot.channelName}:`, err);
+            return undefined;
+          });
+        if (thread) channel = thread;
+      }
       await bridge.handleMessage(
         bot,
         key,

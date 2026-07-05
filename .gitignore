@@ -39,6 +39,19 @@ session-map.json
 *.session
 
 # ──────────────────────────────────────────────────────────────────────────
+# Optional weekly finance market-brief (scripts/finance-brief/*) runtime
+# artifacts: mlflow runs, qlib bin, the Python venv, synthetic CSVs, caches.
+# The generated brief + candles live under data/ (already ignored above).
+# ──────────────────────────────────────────────────────────────────────────
+scripts/finance-brief/mlruns/
+scripts/finance-brief/Users/
+scripts/finance-brief/.venv/
+scripts/finance-brief/__pycache__/
+scripts/finance-brief/synth_csv/
+scripts/finance-brief/*.pyc
+data/finance-brief/
+
+# ──────────────────────────────────────────────────────────────────────────
 # Logs
 # ──────────────────────────────────────────────────────────────────────────
 *.log
