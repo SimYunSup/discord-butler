@@ -28,6 +28,16 @@ export interface SessionEntry {
    * grant self-approval to the requesting user (see canApproveGate).
    */
   authorId?: string;
+  /**
+   * The claude model/effort this conversation last resolved to. Recorded on each
+   * claude turn so a STICKY escalation carries forward: the next turn seeds
+   * {@link ../bots/model-escalation.ts#resolveModelTier}'s `sticky` argument from
+   * these, keeping an earlier "opus"/"deep" bump in effect until a de-escalation word
+   * (or thread end) drops it back to the base. Claude engine only; absent for bots
+   * without modelEscalation, for non-claude engines, and for older entries.
+   */
+  activeModel?: string;
+  activeEffort?: string;
 }
 
 /** The whole session map: conversationKey → entry. */

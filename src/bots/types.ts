@@ -10,12 +10,16 @@ import type { AgentKind } from '../agents/types.js';
 export type MemoryMode = 'task' | 'companion';
 
 /**
- * Per-turn model/effort escalation: the user's raw text is matched on two
- * INDEPENDENT axes that compose. A model trigger bumps the model; an effort
- * trigger bumps the effort; a message hitting both reaches the top (e.g.
- * "opus" + "deep" → Opus xhigh). Matching is a case-insensitive substring test.
- * Applied at window-launch time (a fresh window takes the resolved `--model`/
- * `--effort`); see {@link ./model-escalation.ts}.
+ * Model/effort escalation: the user's raw text is matched on two INDEPENDENT axes
+ * that compose. A model trigger bumps the model; an effort trigger bumps the effort;
+ * a message hitting both reaches the top (e.g. "opus" + "deep" → Opus xhigh). Matching
+ * is a case-insensitive substring test. Applied at window-launch time (a fresh window
+ * takes the resolved `--model`/`--effort`); see {@link ./model-escalation.ts}.
+ *
+ * STICKY: an escalation, once triggered, CARRIES FORWARD to later messages in the same
+ * conversation with no trigger — the resolved tier is persisted in session-map and reused
+ * as the next turn's starting point. The de-escalation triggers below are how a user drops
+ * back to the base without opening a new thread.
  */
 export interface ModelEscalation {
   /** Case-insensitive substrings; ANY match bumps the model to {@link escalatedModel}. */
@@ -26,6 +30,15 @@ export interface ModelEscalation {
   effortTriggers: string[];
   /** Effort level to switch to when an {@link effortTriggers} entry matches (e.g. 'xhigh'). */
   escalatedEffort: string;
+  /**
+   * Optional de-escalation (reset) words for the MODEL axis: a case-insensitive substring
+   * match drops the model back to the bot's base {@link Bot.model}, overriding both the
+   * sticky carry-over and any escalation trigger in the SAME message (an explicit "go back"
+   * wins). Omit ⇒ the model stays escalated until the thread ends. Independent of effort.
+   */
+  modelResetTriggers?: string[];
+  /** Effort-axis de-escalation words. See {@link modelResetTriggers}. */
+  effortResetTriggers?: string[];
 }
 
 /**
@@ -69,7 +82,12 @@ export interface Bot {
    * 'medium' / 'high' / 'xhigh'. Omitted → no flag.
    */
   effort?: string;
-  /** Optional per-turn model/effort escalation matched on the user's text. */
+  /**
+   * Optional model/effort escalation matched on the user's text. An escalation is
+   * STICKY — it carries across later triggerless messages in the same thread until a
+   * {@link ModelEscalation.modelResetTriggers}/{@link ModelEscalation.effortResetTriggers}
+   * de-escalation word (or thread end) drops it back to the base.
+   */
   modelEscalation?: ModelEscalation;
   /**
    * Whether this bot is shared across users (isolated per-user via private threads,

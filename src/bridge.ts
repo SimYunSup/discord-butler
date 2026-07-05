@@ -252,7 +252,18 @@ export class Bridge {
     // Per-message model/effort escalation: resolve the tier from the user's raw
     // text (base = bot.model/effort; a matching trigger overrides). Only the claude
     // backend emits these as `--model`/`--effort`; other backends ignore the tier.
-    const tier = resolveModelTier({ model: bot.model, effort: bot.effort }, bot.modelEscalation, text);
+    // STICKY: an earlier escalation carries forward — seed the resolution with the
+    // tier this conversation last ran at (session-map activeModel/activeEffort), so a
+    // triggerless follow-up stays escalated until a de-escalation word resets it.
+    // Undefined on a fresh conversation ⇒ falls back to the bot's base.
+    const stickyEntry = await this.sessions.get(key);
+    const stickyTier = { model: stickyEntry?.activeModel, effort: stickyEntry?.activeEffort };
+    const tier = resolveModelTier(
+      { model: bot.model, effort: bot.effort },
+      bot.modelEscalation,
+      text,
+      stickyTier,
+    );
 
     // 4. Try each engine in order. On timeout/error, kill the window and start the
     //    next engine fresh. Config errors skip to the next fallback.
@@ -307,6 +318,10 @@ export class Bridge {
           cwd,
           // Record the owner so later turns' author-match guard + gate self-approval work.
           ...(authorId ? { authorId } : {}),
+          // Persist the resolved tier so a STICKY escalation carries to the next turn.
+          // Claude only — non-claude backends ignore the tier, so recording it there
+          // would wrongly seed the next turn's sticky base.
+          ...(engineKind === 'claude' ? { activeModel: tier.model, activeEffort: tier.effort } : {}),
         });
         if (created) {
           const ready = await this.tmux.waitUntilReady(windowName);

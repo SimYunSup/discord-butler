@@ -14,6 +14,21 @@ export const SHARED_CATEGORY_NAME = '공용 상담·서류';
 export const OWNER_CATEGORY_NAME = '소유자 전용';
 
 /**
+ * Shared de-escalation (격하) trigger words for {@link Bot.modelEscalation}. Because an
+ * escalation is now STICKY — one "opus"/"심층" keeps the thread there — these are how a
+ * user drops back to the bot's base tier without opening a new thread. Deliberately
+ * model-AGNOSTIC (intent words like "원래대로"/"격하", never a concrete alias) so the one
+ * list is safe to wire into every escalation bot on either axis; none is a substring of
+ * any escalation trigger, so they never collide.
+ */
+export const EFFORT_DEESCALATION_TRIGGERS = [
+  '가볍게', '간단히', '간단하게', '대충', '얕게', '평소대로', '원래대로', '기본으로', '격하',
+];
+export const MODEL_DEESCALATION_TRIGGERS = [
+  '평소대로', '원래대로', '기본으로', '기본 모델로', '격하', '가볍게',
+];
+
+/**
  * 기획 (Planning) — personal, task-memory. Idea → structured plan / PRD / roadmap,
  * output straight to Discord. Uses the web for quick research.
  */
@@ -174,6 +189,7 @@ const research: Bot = {
     escalatedModel: 'opus',
     effortTriggers: ['깊게', '깊이', '더 깊', '심층', '딥리서치', '면밀', '철저히', 'xhigh'],
     escalatedEffort: 'xhigh',
+    effortResetTriggers: EFFORT_DEESCALATION_TRIGGERS,
   },
   shared: false,
   memoryMode: 'task',
@@ -260,6 +276,8 @@ const ask: Bot = {
     escalatedModel: 'sonnet',
     effortTriggers: ['코드', '파일', '분석', '계획', '장문', '복잡', '여러 단계', '디버그'],
     escalatedEffort: 'medium',
+    modelResetTriggers: MODEL_DEESCALATION_TRIGGERS,
+    effortResetTriggers: EFFORT_DEESCALATION_TRIGGERS,
   },
   shared: false,
   memoryMode: 'task',
@@ -297,6 +315,8 @@ const resume: Bot = {
     escalatedModel: 'opus',
     effortTriggers: ['최종본', '최종 polish', '제출용', '제출', '중요한 회사', '임원', '투자자', '해외 지원', 'high'],
     escalatedEffort: 'high',
+    modelResetTriggers: MODEL_DEESCALATION_TRIGGERS,
+    effortResetTriggers: EFFORT_DEESCALATION_TRIGGERS,
   },
   shared: false,
   memoryMode: 'task',
@@ -363,6 +383,7 @@ const githubIssues: Bot = {
     escalatedModel: 'opus',
     effortTriggers: ['실패 반복', '반복 실패', '보안', '인증', '결제', '데이터 손실', '마이그레이션', '대형 변경', '대규모', '원인 불명', '복잡', 'high'],
     escalatedEffort: 'high',
+    effortResetTriggers: EFFORT_DEESCALATION_TRIGGERS,
   },
   shared: true,
   category: PERSONAL_CATEGORY_NAME,
@@ -479,6 +500,8 @@ const codeReview: Bot = {
     escalatedModel: 'opus',
     effortTriggers: ['xhigh', '깊게', '심층', '보안', '인증', '결제', '동시성', '마이그레이션', '대형 PR', '대규모', '아키텍처', '데이터 손실'],
     escalatedEffort: 'xhigh',
+    modelResetTriggers: MODEL_DEESCALATION_TRIGGERS,
+    effortResetTriggers: EFFORT_DEESCALATION_TRIGGERS,
   },
   shared: true,
   category: PERSONAL_CATEGORY_NAME,
