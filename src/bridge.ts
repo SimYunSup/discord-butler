@@ -107,6 +107,15 @@ export interface BridgeCallbacks {
 const COMPANION_MEMORY_EVERY_N_TURNS = 12;
 
 /**
+ * Bounds for the post-reply async-followup watcher (see {@link Bridge.armAsyncFollowup}).
+ * Idle: give up if NO hook activity arrives for this long — the window is idle, no background
+ * subagent is running. Max: hard backstop regardless of activity, so a wedged/looping
+ * background subagent can't pin a watcher (and its file-tail poll) open indefinitely.
+ */
+const ASYNC_FOLLOWUP_IDLE_TIMEOUT_MS = 10 * 60_000;
+const ASYNC_FOLLOWUP_MAX_TIMEOUT_MS = 30 * 60_000;
+
+/**
  * End-session command aliases. When the user's whole message (trimmed) is one of
  * these, the bridge kills the conversation's window and clears its session entry
  * instead of forwarding to claude — the next message starts a fresh conversation.
@@ -198,6 +207,15 @@ export class Bridge {
    * aborts it to release the queue without killing the window (see {@link interrupt}).
    */
   private readonly inflight = new Map<string, AbortController>();
+  /**
+   * Per-key watcher for STRAY Stop events that arrive AFTER a turn's reply was already posted
+   * — e.g. a research bot's Task subagents finish in the background and claude auto-resumes to
+   * deliver follow-up answers. awaitNextStop only tails for the in-flight turn and stops the
+   * moment it resolves, so without this a bot promising "완료되면 알려드릴게요" could never
+   * deliver. Armed once per successful claude reply (see armAsyncFollowup); cancelled at the
+   * top of the NEXT runTurn for the same key so it never races that turn's own awaitNextStop.
+   */
+  private readonly followupWatchers = new Map<string, AbortController>();
 
   constructor(private readonly config: ButlerConfig) {
     this.tmux = new TmuxManager(config.tmuxBin);
@@ -278,6 +296,16 @@ export class Bridge {
     authorId?: string,
   ): Promise<void> {
     const windowName = sanitizeKey(key);
+
+    // Cancel any stray-Stop watcher left over from the PREVIOUS turn on this key (see
+    // followupWatchers) before it can race this turn's own awaitNextStop over the same events
+    // file — both tail the same file, and if the watcher's Stop arrived first it would relay
+    // THIS turn's answer as a bogus "background done" follow-up instead of the fresh reply.
+    const staleFollowup = this.followupWatchers.get(key);
+    if (staleFollowup) {
+      staleFollowup.abort();
+      this.followupWatchers.delete(key);
+    }
 
     // 0. Session command: an explicit end command tears the window down (ending
     //    the conversation) without forwarding anything to claude. Windows are
@@ -537,6 +565,12 @@ export class Bridge {
         if (bot.memoryMode === 'companion') {
           await this.maybeRefreshCompanionMemory(key, windowName);
         }
+        // Window stays alive — arm a bounded watcher for a stray LATER Stop (a background Task
+        // subagent finishing after this reply already went out; see followupWatchers). Only
+        // claude carries the Task-subagent/background-resume capability this covers.
+        if (engineKind === 'claude') {
+          this.armAsyncFollowup(bot, key, cwd, events, cb);
+        }
         return;
       } catch (err) {
         // /interrupt stopped this turn: keep the window + context alive (do NOT kill), signal
@@ -699,6 +733,68 @@ export class Bridge {
   }
 
   /**
+   * Starts a detached watcher for stray Stop events arriving on `key`'s events file AFTER its
+   * turn already replied — see {@link followupWatchers}. Fire-and-forget: does not block the
+   * caller (the queue must release immediately). Relays every stray Stop until idle/max
+   * timeout, or until the next runTurn on the same key aborts it.
+   */
+  private armAsyncFollowup(bot: Bot, key: string, cwd: string, eventsPath: string, cb: BridgeCallbacks): void {
+    const controller = new AbortController();
+    this.followupWatchers.set(key, controller);
+    void this.runAsyncFollowup(bot, key, cwd, eventsPath, cb, controller.signal).finally(() => {
+      if (this.followupWatchers.get(key) === controller) this.followupWatchers.delete(key);
+    });
+  }
+
+  /**
+   * Waits (bounded) for stray Stop events beyond the turn that already replied and relays EACH
+   * one to Discord as an unsolicited follow-up. A background job finishes in stages (e.g. N
+   * parallel review subagents completing at different moments), so claude auto-resumes and
+   * emits a Stop per stage; every one must reach the user, not just the first. Uses the tail's
+   * streaming mode (a single continuous tail, so no Stop is dropped between completions) and
+   * gives up silently on idle/max timeout (most turns never produce a stray Stop) or on abort.
+   */
+  private async runAsyncFollowup(
+    bot: Bot,
+    key: string,
+    cwd: string,
+    eventsPath: string,
+    cb: BridgeCallbacks,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // Serialize deliveries so two Stops arriving close together still post in arrival order
+    // (delivery is async — redact + upload — so a later one could otherwise resolve first).
+    let deliverChain: Promise<void> = Promise.resolve();
+    try {
+      await tailEventsForStop(
+        eventsPath,
+        { onReply: () => {}, onNotification: cb.onNotification },
+        {
+          idleTimeoutMs: ASYNC_FOLLOWUP_IDLE_TIMEOUT_MS,
+          maxTimeoutMs: ASYNC_FOLLOWUP_MAX_TIMEOUT_MS,
+          onStop: (text) => {
+            if (!text.trim()) return;
+            deliverChain = deliverChain
+              .then(async () => {
+                const { cleaned, files } = await this.extractOutgoingFiles(text, cwd);
+                const finalText = await this.applyRedact(bot, key, cleaned);
+                if (!finalText.trim() && !files.length) return; // nothing to deliver
+                await cb.onReply(`📎 (백그라운드 완료)\n\n${finalText}`, files.length ? files : undefined);
+              })
+              .catch((err) => console.error(`[bridge] async followup deliver failed (${key}):`, err));
+          },
+        },
+        signal,
+      );
+    } catch {
+      // idle/max timeout or interrupted — no (further) stray completion; stop watching.
+    }
+    // The tail has settled; drain any in-flight delivery so a Stop that landed just before the
+    // idle cutoff still reaches Discord before we return.
+    await deliverChain;
+  }
+
+  /**
    * Downloads user-uploaded attachments into `<cwd>/attachments/` so the bot's
    * claude can Read them, and returns a note (appended to the message) listing
    * their workspace-relative paths. Best-effort: a failed download is skipped.
@@ -830,6 +926,15 @@ export interface TailOptions {
   maxTimeoutMs: number;
   /** Poll cadence for the file tail (ms). Default 250. */
   pollMs?: number;
+  /**
+   * Streaming mode for the async-followup watcher: when provided, EACH Stop is handed to this
+   * callback and tailing CONTINUES (instead of resolving on the first Stop). The promise then
+   * settles only on idle/max timeout or abort — so a background job that emits several Stops
+   * over time (N parallel subagents finishing at different moments) has every completion
+   * relayed, not just the first. A single continuous tail means no Stop is dropped in the gap
+   * between two separate awaiters.
+   */
+  onStop?: (text: string) => void;
 }
 
 /**
@@ -864,6 +969,7 @@ export function tailEventsForStop(
   return new Promise<string>((resolvePromise, rejectPromise) => {
     let offset = 0;
     let carry = '';
+    let inode: number | undefined;
     let settled = false;
     let pollTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
@@ -971,6 +1077,12 @@ export function tailEventsForStop(
         return;
       }
       if (evt.event === 'Stop') {
+        if (opts.onStop) {
+          // Streaming mode: relay this Stop and KEEP tailing for further ones (the idle
+          // deadline was already reset above). Only idle/max/abort settles us.
+          opts.onStop(extractAssistantText(evt.payload));
+          return;
+        }
         finish(() => resolvePromise(extractAssistantText(evt.payload)));
       }
     };
@@ -979,6 +1091,20 @@ export function tailEventsForStop(
       if (settled) return;
       try {
         const s = await stat(eventsPath).catch(() => undefined);
+        if (s) {
+          // The events file shrank or was rotated out from under us. The daily cleanup daemon
+          // rotates events/*.jsonl with `tail -n N > tmp; mv tmp ev` (new inode, smaller file
+          // that still RETAINS the last N lines). Our offset is now past the new EOF, so
+          // `s.size > offset` would never be true again — every later turn for this
+          // conversation would hang until the idle timeout. Re-anchor to the CURRENT EOF (not
+          // 0): jumping to 0 would re-read retained lines and could re-resolve a stale Stop
+          // from a prior turn. We only want Stops appended AFTER the rotation.
+          if (s.size < offset || (inode !== undefined && s.ino !== inode)) {
+            offset = s.size;
+            carry = '';
+          }
+          inode = s.ino;
+        }
         if (s && s.size > offset) {
           const fh = await open(eventsPath, 'r');
           try {
@@ -1015,7 +1141,9 @@ export function tailEventsForStop(
     resetIdle();
     void (async () => {
       try {
-        offset = (await stat(eventsPath)).size;
+        const s = await stat(eventsPath);
+        offset = s.size;
+        inode = s.ino;
       } catch {
         offset = 0; // file not created yet; start from the beginning when it appears.
       }
