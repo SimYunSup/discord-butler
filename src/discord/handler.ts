@@ -479,6 +479,43 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
   typing();
   const typingTimer = setInterval(typing, 8000);
 
+  // Live progress: a SINGLE status line ("⏳ 지금: <라벨>…") the bridge feeds from the bot's
+  // tool calls (PreToolUse hook → toolProgressLabel, throttled). We edit it in place as the
+  // label changes and DELETE it when the turn finishes — the real answer follows via onReply.
+  // The message location is persisted to session-map the moment it's created, so a bridge
+  // crash/restart mid-turn doesn't strand it: the next boot sweeps and deletes the orphan
+  // (see client.ts). Edits serialize through a chain so overlapping awaits can't post twice.
+  let progressMsg: Message | undefined;
+  let progressChain: Promise<void> = Promise.resolve();
+  const pushProgress = (label: string): Promise<void> => {
+    progressChain = progressChain
+      .then(async () => {
+        const content = `⏳ 지금: ${label}…`;
+        if (!progressMsg) {
+          progressMsg = await replyChannel
+            .send({ content, flags: MessageFlags.SuppressEmbeds })
+            .catch(() => undefined);
+          if (progressMsg) {
+            await bridge.sessionStore
+              .patch(key, { progressMsg: { channelId: replyChannel.id, messageId: progressMsg.id } })
+              .catch(() => undefined);
+          }
+        } else {
+          await progressMsg.edit({ content }).catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return progressChain;
+  };
+  const finalizeProgress = async (): Promise<void> => {
+    await progressChain.catch(() => undefined);
+    if (progressMsg) {
+      await progressMsg.delete().catch(() => undefined);
+      await bridge.sessionStore.clearProgressMsg(key).catch(() => undefined);
+      progressMsg = undefined;
+    }
+  };
+
   try {
     await bridge.handleMessage(
       bot,
@@ -486,6 +523,7 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
       text,
       {
         onReply: (reply, files) => postReply(replyChannel, reply, files),
+        onProgress: (label) => pushProgress(label),
         onNotification: (notif, notifType) =>
           postChunked(replyChannel, `🔔 ${bot.displayName}: ${notif}${notifType ? ` [${notifType}]` : ''}`),
         onApproval: async (cmd, gateKey, reqId) => {
@@ -509,6 +547,9 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
     void message.react('⚠️').catch(() => undefined);
     throw err;
   } finally {
+    // Delete the progress status line (the answer/error stands on its own), draining any
+    // pending edit first so the delete can't race a late edit.
+    await finalizeProgress();
     clearInterval(typingTimer);
   }
 }

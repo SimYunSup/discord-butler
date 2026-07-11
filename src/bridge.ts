@@ -53,6 +53,13 @@ export interface BridgeCallbacks {
   /** Surface a permission/idle notification (e.g. as a Discord message/button). */
   onNotification?: (message: string, notificationType: string | undefined) => Promise<void> | void;
   /**
+   * A throttled, human-readable "what the bot is doing right now" line, derived
+   * AUTOMATICALLY from the bot's tool calls (the PreToolUse hook → {@link toolProgressLabel}),
+   * surfaced BEFORE the final reply. The handler shows it as a single status line that
+   * updates in place. Dropped when unset (e.g. the flush awaiter passes no onProgress).
+   */
+  onProgress?: (message: string) => Promise<void> | void;
+  /**
    * A claude-native permission prompt appeared (the model called a tool not on the
    * allowlist). The bridge CANNOT drive that arrow-key TUI menu, so left alone the
    * turn hangs until the idle timeout. When provided, this is invoked INSTEAD of
@@ -686,6 +693,50 @@ export class Bridge {
   }
 }
 
+/**
+ * Minimum gap between two relayed progress updates (a Discord message edit each). A busy
+ * turn fires many PreToolUse hooks per second; without this the status line would edit far
+ * past Discord's rate limit. 4s keeps it live but well under the cap.
+ */
+const PROGRESS_THROTTLE_MS = 4_000;
+
+/** Runaway backstop on progress edits per turn (the 4s throttle keeps a normal turn far under). */
+const MAX_PROGRESS_PER_TURN = 300;
+
+/**
+ * Maps a Claude Code tool name to a short Korean "지금 하는 일" phrase for the live progress
+ * status line. MCP tools collapse by server. An unmapped tool falls back to a generic
+ * "작업 중" so a new tool never shows a raw internal name. Exported for tests.
+ */
+export function toolProgressLabel(toolName: string): string {
+  if (toolName.startsWith('mcp__notion__')) return 'Notion 읽고 정리하는 중';
+  if (toolName.startsWith('mcp__')) return '외부 도구 사용하는 중';
+  switch (toolName) {
+    case 'WebFetch':
+      return '웹 자료 가져오는 중';
+    case 'WebSearch':
+      return '웹 검색 중';
+    case 'Read':
+      return '파일 읽는 중';
+    case 'Write':
+    case 'Edit':
+    case 'NotebookEdit':
+      return '파일 작성하는 중';
+    case 'Bash':
+      return '명령 실행 중';
+    case 'Task':
+    case 'Agent':
+      return '하위 작업 병렬 실행 중';
+    case 'Glob':
+    case 'Grep':
+      return '자료 검색 중';
+    case 'ToolSearch':
+      return '도구 찾는 중';
+    default:
+      return '작업 중';
+  }
+}
+
 /** Deadlines for {@link tailEventsForStop}. */
 export interface TailOptions {
   /** Reject after this long with NO hook activity (heartbeats reset it). */
@@ -730,6 +781,11 @@ export function tailEventsForStop(
     let settled = false;
     let pollTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
+    // Live-progress throttle state (see the PreToolUse branch): the last label we relayed
+    // and when, plus a runaway per-turn cap. Reset per awaiter (per turn).
+    let progressCount = 0;
+    let lastProgressLabel = '';
+    let lastProgressAt = 0;
 
     const cleanup = (): void => {
       if (pollTimer) clearTimeout(pollTimer);
@@ -769,8 +825,29 @@ export function tailEventsForStop(
       const isIdlePrompt =
         evt.event === 'Notification' && evt.payload?.notification_type === 'idle_prompt';
       if (!isIdlePrompt) resetIdle();
+      if (evt.event === 'PreToolUse') {
+        // Auto-progress: turn this tool call into a throttled "지금 하는 일" line. Relay only
+        // when the label CHANGES and ≥ PROGRESS_THROTTLE_MS has passed — a run of the same
+        // tool collapses to one line, a burst of different tools is rate-limited (each relay
+        // is a Discord edit). Never resolves the turn (only Stop does); resetIdle ran above.
+        const toolName = typeof evt.payload.tool_name === 'string' ? evt.payload.tool_name : '';
+        const label = toolName ? toolProgressLabel(toolName) : '';
+        const now = Date.now();
+        if (
+          label &&
+          label !== lastProgressLabel &&
+          now - lastProgressAt >= PROGRESS_THROTTLE_MS &&
+          progressCount < MAX_PROGRESS_PER_TURN
+        ) {
+          lastProgressLabel = label;
+          lastProgressAt = now;
+          progressCount++;
+          void cb.onProgress?.(label);
+        }
+        return;
+      }
       // Heartbeats: consumed only to reset the idle deadline (done above); not surfaced.
-      if (evt.event === 'PreToolUse' || evt.event === 'PostToolUse') return;
+      if (evt.event === 'PostToolUse') return;
       if (evt.event === 'Notification') {
         const message =
           typeof evt.payload.message === 'string' ? evt.payload.message : '권한/입력 대기';

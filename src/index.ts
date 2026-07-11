@@ -24,7 +24,7 @@ async function main(): Promise<void> {
 
   const bridge = new Bridge(config);
   const client = createClient();
-  initClient(client);
+  initClient(client, bridge.sessionStore);
   registerHandler(client, bridge);
 
   // Graceful shutdown: disconnect from Discord but LEAVE the tmux "butler" session

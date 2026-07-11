@@ -14,6 +14,7 @@ import {
   SHARED_CATEGORY_NAME,
 } from '../bots/registry.js';
 import type { Bot } from '../bots/types.js';
+import type { SessionMapStore } from '../persistence/session-map.js';
 import { registerGuildCommands } from './commands.js';
 import { buildChannelTopic } from './channel-topic.js';
 
@@ -122,12 +123,51 @@ async function ensureChannels(guild: Guild): Promise<void> {
 }
 
 /**
- * Wires up the client: on ready, ensures categories/channels across all guilds.
- * The caller attaches the message handler and logs in.
+ * Deletes progress status messages left orphaned by a bridge stop/crash mid-turn. Each live
+ * turn persists its "⏳ 지금: …" message location to session-map (see the handler); on a clean
+ * finish the handler deletes it and clears the pointer, but a crash/restart skips that — so on
+ * the next boot every entry that still carries a `progressMsg` points at a stranded line. We
+ * fetch each and delete it (the bot's own message → no special perms), then clear the pointer.
+ * Best-effort: a missing channel/message just clears the (now-dead) pointer.
  */
-export function initClient(client: Client): void {
+async function sweepStaleProgress(client: Client, store: SessionMapStore): Promise<void> {
+  let map: Awaited<ReturnType<SessionMapStore['read']>>;
+  try {
+    map = await store.read();
+  } catch {
+    return;
+  }
+  const stale = Object.entries(map).filter(([, e]) => e.progressMsg);
+  if (!stale.length) return;
+  let deleted = 0;
+  for (const [key, entry] of stale) {
+    const pm = entry.progressMsg!;
+    const channel = await client.channels.fetch(pm.channelId).catch(() => null);
+    if (channel && channel.isTextBased() && 'messages' in channel) {
+      const ok = await channel.messages
+        .delete(pm.messageId)
+        .then(() => true)
+        .catch(() => false);
+      if (ok) deleted++;
+    }
+    await store.clearProgressMsg(key).catch(() => undefined);
+  }
+  if (deleted) console.log(`[discord] swept ${deleted} orphaned progress message(s) from a prior run`);
+}
+
+/**
+ * Wires up the client: on ready, ensures categories/channels across all guilds.
+ * The caller attaches the message handler and logs in. `sessionStore`, when given, triggers
+ * a one-time sweep of progress status messages orphaned by a prior crash/restart.
+ */
+export function initClient(client: Client, sessionStore?: SessionMapStore): void {
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[discord] logged in as ${ready.user.tag}`);
+    if (sessionStore) {
+      await sweepStaleProgress(ready, sessionStore).catch((err) =>
+        console.error('[discord] stale-progress sweep failed:', err),
+      );
+    }
     // The guild cache can be empty at ready (guilds still syncing); fetch to be
     // sure, then fetch each full Guild so channel scanning sees everything.
     let guilds = [...ready.guilds.cache.values()];
