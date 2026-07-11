@@ -4,6 +4,7 @@ import {
   MessageFlags,
   type ButtonInteraction,
   type Channel,
+  type ChatInputCommandInteraction,
   type Client,
   type GuildMember,
   type Message,
@@ -17,6 +18,7 @@ import type { Bot } from '../bots/types.js';
 import { bots } from '../bots/registry.js';
 import { conversationKey, findBotForChannel } from '../router.js';
 import { handleChatInputCommand } from './commands.js';
+import { renderBotExplainer } from './bot-explainer.js';
 import {
   parseGateButton,
   postApprovalButtons,
@@ -196,8 +198,15 @@ export function registerHandler(client: Client, bridge: Bridge): void {
     });
   });
   client.on(Events.InteractionCreate, (interaction) => {
-    // Slash commands: /github-token* are ephemeral token onboarding.
+    // Slash commands: /설명 is per-channel (needs bot routing); /github-token* are
+    // ephemeral token onboarding.
     if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === '설명') {
+        void handleSessionCommand(interaction, bridge).catch((err) =>
+          console.error('[handler] error while handling session command:', err),
+        );
+        return;
+      }
       void handleChatInputCommand(interaction, bridge).catch((err) =>
         console.error('[handler] error while handling chat-input command:', err),
       );
@@ -337,6 +346,44 @@ async function handleSelect(interaction: StringSelectMenuInteraction, bridge: Br
     );
   } finally {
     clearInterval(typingTimer);
+  }
+}
+
+/**
+ * Handles a per-channel session slash command (currently `/설명`): resolves the owning bot
+ * from the interaction's channel, applies the same access gate as a message (ownerOnly +
+ * allowedUserIdEnv), then replies ephemerally with the bot's detail card. Read-only — no
+ * bridge turn is run.
+ */
+async function handleSessionCommand(
+  interaction: ChatInputCommandInteraction,
+  _bridge: Bridge,
+): Promise<void> {
+  const channel = interaction.channel;
+  const bot = channel ? findBotForChannel(routingChannelNameForChannel(channel)) : undefined;
+  if (!channel || !channel.isSendable() || !bot) {
+    await interaction
+      .reply({ content: '여기서는 쓸 수 없는 명령이에요. 비서 채널/스레드에서 사용해 주세요.', flags: MessageFlags.Ephemeral })
+      .catch(() => undefined);
+    return;
+  }
+  if (bot.ownerOnly && interaction.user.id !== process.env.OWNER_DISCORD_ID) {
+    await interaction.reply({ content: '이 비서는 소유자 전용이에요.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    return;
+  }
+  if (bot.allowedUserIdEnv) {
+    const allowedId = process.env[bot.allowedUserIdEnv];
+    if (!allowedId || interaction.user.id !== allowedId) {
+      await interaction
+        .reply({ content: '이 비서는 지정된 사용자 전용이에요.', flags: MessageFlags.Ephemeral })
+        .catch(() => undefined);
+      return;
+    }
+  }
+  if (interaction.commandName === '설명') {
+    await interaction
+      .reply({ content: renderBotExplainer(bot), flags: MessageFlags.Ephemeral })
+      .catch(() => undefined);
   }
 }
 

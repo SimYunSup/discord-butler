@@ -40,6 +40,14 @@ export const GITHUB_TOKEN_COMMANDS: ChatInputApplicationCommandData[] = [
   { name: 'github-token-remove', description: '등록한 GitHub 토큰을 삭제합니다.' },
 ];
 
+/**
+ * Per-channel session commands (need channel→bot routing, handled in the interaction
+ * dispatcher, not here). `/설명` shows the channel's bot detail card, ephemeral.
+ */
+export const SESSION_COMMANDS: ChatInputApplicationCommandData[] = [
+  { name: '설명', description: '이 비서의 모델·격상 트리거 등 상세 설정을 나만 보이게 알려줘요.' },
+];
+
 /** gh api user(JSON) → identity. name falls back to login. Returns undefined on parse/field failure. */
 export function parseUserApiJson(
   stdout: string,
@@ -76,7 +84,7 @@ export async function validateToken(
 
 /** Guild-scoped registration (applied instantly). Needs the applications.commands invite scope. */
 export async function registerGuildCommands(guild: Guild): Promise<void> {
-  await guild.commands.set(GITHUB_TOKEN_COMMANDS);
+  await guild.commands.set([...GITHUB_TOKEN_COMMANDS, ...SESSION_COMMANDS]);
 }
 
 /** Handles /github-token · /github-token-remove (always ephemeral). NEVER echoes the token. */
