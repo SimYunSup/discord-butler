@@ -47,6 +47,7 @@ export const GITHUB_TOKEN_COMMANDS: ChatInputApplicationCommandData[] = [
 export const SESSION_COMMANDS: ChatInputApplicationCommandData[] = [
   { name: '설명', description: '이 비서의 모델·격상 트리거 등 상세 설정을 나만 보이게 알려줘요.' },
   { name: 'interrupt', description: '진행 중인 작업을 즉시 멈춰요(대화 맥락은 유지).' },
+  { name: 'end', description: '이 대화를 종료(초기화)하고, 스레드에서 쓰면 스레드도 닫아요.' },
 ];
 
 /** gh api user(JSON) → identity. name falls back to login. Returns undefined on parse/field failure. */

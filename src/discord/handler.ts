@@ -198,10 +198,14 @@ export function registerHandler(client: Client, bridge: Bridge): void {
     });
   });
   client.on(Events.InteractionCreate, (interaction) => {
-    // Slash commands: /설명 is per-channel (needs bot routing); /github-token* are
-    // ephemeral token onboarding.
+    // Slash commands: /설명·/interrupt·/end are per-channel (need bot routing); /github-token*
+    // are ephemeral token onboarding.
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === '설명' || interaction.commandName === 'interrupt') {
+      if (
+        interaction.commandName === '설명' ||
+        interaction.commandName === 'interrupt' ||
+        interaction.commandName === 'end'
+      ) {
         void handleSessionCommand(interaction, bridge).catch((err) =>
           console.error('[handler] error while handling session command:', err),
         );
@@ -395,6 +399,25 @@ async function handleSessionCommand(
         flags: MessageFlags.Ephemeral,
       })
       .catch(() => undefined);
+    return;
+  }
+
+  if (interaction.commandName === 'end') {
+    // flush + teardown can wait on a Stop hook (flushOnEnd), so defer to beat the 3s ack
+    // deadline. Route the bridge's "세션 종료" line into the EPHEMERAL reply (user-only) rather
+    // than posting it into the (about-to-close) thread, then archive the thread (best-effort).
+    const threadId = channel.isThread() ? channel.id : undefined;
+    const key = conversationKey(bot, interaction.user.id, threadId);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    await bridge.handleMessage(
+      bot,
+      key,
+      '/end',
+      { onReply: (reply) => void interaction.editReply(reply).catch(() => undefined) },
+      [],
+      { authorId: interaction.user.id },
+    );
+    await closeThread(channel, 'discord-butler: /end로 대화를 종료했어요');
     return;
   }
 
