@@ -15,6 +15,7 @@ import {
 } from '../bots/registry.js';
 import type { Bot } from '../bots/types.js';
 import { registerGuildCommands } from './commands.js';
+import { buildChannelTopic } from './channel-topic.js';
 
 /**
  * Creates the discord.js Client with the intents the butler needs:
@@ -81,8 +82,9 @@ async function ensureBotChannels(
         });
         console.log(`[discord] moved #${bot.channelName} → "${category.name}"`);
       }
-      if (bot.usage && existing.topic !== bot.usage) {
-        await existing.setTopic(bot.usage).catch((err) => {
+      const topic = buildChannelTopic(bot);
+      if (existing.topic !== topic) {
+        await existing.setTopic(topic).catch((err) => {
           console.error(`[discord] failed to set topic on #${bot.channelName}:`, err);
         });
       }
@@ -92,7 +94,7 @@ async function ensureBotChannels(
       name: bot.channelName,
       type: ChannelType.GuildText,
       parent: category.id,
-      topic: bot.usage,
+      topic: buildChannelTopic(bot),
       reason: `discord-butler: channel for bot ${bot.id}`,
     });
     console.log(`[discord] created channel "#${bot.channelName}" for bot ${bot.id}`);
