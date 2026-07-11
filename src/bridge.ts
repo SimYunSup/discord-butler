@@ -6,7 +6,7 @@ import type { ButlerConfig } from './config.js';
 import type { Bot } from './bots/types.js';
 import { githubTokenEnv } from './bots/github-token.js';
 import { redactPII } from './redact.js';
-import { buildModelSwitchCommands, resolveModelTier } from './bots/model-escalation.js';
+import { buildModelSwitchCommands, matchedEscalationTriggers, resolveModelTier } from './bots/model-escalation.js';
 import { TmuxManager } from './tmux/manager.js';
 import { SessionMapStore } from './persistence/session-map.js';
 import { ensureWorkspace, eventsFile } from './claude/workspace.js';
@@ -103,6 +103,39 @@ const END_COMMANDS = new Set(['/end', '/exit', '/quit', '/reset', '/new', '/종�
 /** Whether `text` is an explicit end-session command. */
 export function isEndCommand(text: string): boolean {
   return END_COMMANDS.has(text.trim().toLowerCase());
+}
+
+/** Human-facing engine (backend) names for the {@link engineBanner}. */
+const ENGINE_LABEL: Record<AgentKind, string> = {
+  claude: 'Claude',
+  kimi: 'Kimi',
+  glm: 'GLM',
+  codex: 'Codex',
+};
+
+/**
+ * A one-line **engine · model · effort** banner posted UP FRONT (its own message) at the
+ * start of a conversation — and again whenever the answering engine or tier changes — so the
+ * user always knows who/what is replying. Shown for EVERY engine including the primary
+ * claude (🧠); fallback engines get ⚙️. `model`/`effort` are omitted when absent (only the
+ * claude backend carries a tier). When a keyword bumped the tier ABOVE the bot's base this
+ * turn, the banner names which trigger fired (`⬆️ 격상(트리거: …)`); symmetrically a reset
+ * word that dropped a sticky escalation shows `⬇️ 격하(트리거: …)`. Exported for tests.
+ */
+export function engineBanner(
+  engine: AgentKind,
+  model?: string,
+  effort?: string,
+  escalatedTriggers?: string[],
+  deescalatedTriggers?: string[],
+): string {
+  const icon = engine === 'claude' ? '🧠' : '⚙️';
+  const parts = [`${icon} **${ENGINE_LABEL[engine]}**`];
+  if (model) parts.push(`\`${model}\``);
+  if (effort) parts.push(effort);
+  if (escalatedTriggers && escalatedTriggers.length) parts.push(`⬆️ 격상(트리거: ${escalatedTriggers.join('·')})`);
+  if (deescalatedTriggers && deescalatedTriggers.length) parts.push(`⬇️ 격하(트리거: ${deescalatedTriggers.join('·')})`);
+  return parts.join(' · ');
 }
 
 /** Sanitizes an attachment filename to a safe basename (no path traversal). */
@@ -263,6 +296,34 @@ export class Bridge {
       { model: priorEntry?.activeModel, effort: priorEntry?.activeEffort },
     );
 
+    // Banner markers: which keyword bumped the tier ABOVE the base this turn (⬆️), and
+    // which reset word dropped a sticky escalation back to base (⬇️). Only announce an axis
+    // that actually CHANGED (a match on a no-op axis, escalated==base, isn't shown).
+    const matched = matchedEscalationTriggers(bot.modelEscalation, text);
+    const escalatedTriggers = [
+      ...new Set(
+        [
+          matched.model !== undefined && tier.model !== bot.model ? matched.model : undefined,
+          matched.effort !== undefined && tier.effort !== bot.effort ? matched.effort : undefined,
+        ].filter((t): t is string => t !== undefined),
+      ),
+    ];
+    const deescalatedTriggers = [
+      ...new Set(
+        [
+          matched.modelReset !== undefined && tier.model === bot.model && priorEntry?.activeModel !== bot.model
+            ? matched.modelReset
+            : undefined,
+          matched.effortReset !== undefined && tier.effort === bot.effort && priorEntry?.activeEffort !== bot.effort
+            ? matched.effortReset
+            : undefined,
+        ].filter((t): t is string => t !== undefined),
+      ),
+    ];
+    // The banner is (re)posted only when this signature changes — conversation start, engine
+    // change, and tier escalation up/down — so a stable-tier thread isn't spammed every turn.
+    let lastBannerSig = priorEntry?.bannerSig;
+
     // 4. Try each engine in order. On timeout/error, kill the window and start the
     //    next engine fresh. Config errors skip to the next fallback.
     for (let i = 0; i < engines.length; i++) {
@@ -305,8 +366,26 @@ export class Bridge {
         };
       }
 
-      if (i > 0) {
-        await cb.onReply(`⚙️ ${engineKind}입니다.`);
+      // Engine·model·effort banner — UP FRONT, before the (slow) window boot, so the user
+      // knows who/what is answering while they wait. Re-posted only when the tier signature
+      // changes (start · engine change · escalation up/down). Only the claude backend carries
+      // a model/effort tier; other backends ignore it, so their banner omits both (and the
+      // escalation markers, which describe that tier).
+      const bannerModel = engineKind === 'claude' ? tier.model : undefined;
+      const bannerEffort = engineKind === 'claude' ? tier.effort : undefined;
+      const bannerSig = `${engineKind}|${bannerModel ?? ''}|${bannerEffort ?? ''}`;
+      if (bannerSig !== lastBannerSig) {
+        await cb.onReply(
+          engineBanner(
+            engineKind,
+            bannerModel,
+            bannerEffort,
+            engineKind === 'claude' ? escalatedTriggers : [],
+            engineKind === 'claude' ? deescalatedTriggers : [],
+          ),
+        );
+        lastBannerSig = bannerSig;
+        await this.sessions.patch(key, { bannerSig });
       }
 
       try {
