@@ -42,7 +42,7 @@ export function renderBotExplainer(bot: Bot): string {
 
   lines.push(`🛠 기능  ${summarizeCapabilities(bot.allowedTools)}`);
 
-  lines.push('───', '공통 명령  `/설명` · `/end`(또는 `/새대화`·`/reset`)');
+  lines.push('───', '공통 명령  `/설명` · `/end`(또는 `/새대화`·`/reset`) · `/interrupt`(또는 `/중단`·`/멈춰`)');
   return lines.join('\n');
 }
 

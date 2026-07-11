@@ -13,7 +13,7 @@ import {
   type StringSelectMenuInteraction,
   type TextChannel,
 } from 'discord.js';
-import { isEndCommand, type Bridge } from '../bridge.js';
+import { isEndCommand, isInterruptCommand, type Bridge } from '../bridge.js';
 import type { Bot } from '../bots/types.js';
 import { bots } from '../bots/registry.js';
 import { conversationKey, findBotForChannel } from '../router.js';
@@ -201,7 +201,7 @@ export function registerHandler(client: Client, bridge: Bridge): void {
     // Slash commands: /설명 is per-channel (needs bot routing); /github-token* are
     // ephemeral token onboarding.
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === '설명') {
+      if (interaction.commandName === '설명' || interaction.commandName === 'interrupt') {
         void handleSessionCommand(interaction, bridge).catch((err) =>
           console.error('[handler] error while handling session command:', err),
         );
@@ -357,7 +357,7 @@ async function handleSelect(interaction: StringSelectMenuInteraction, bridge: Br
  */
 async function handleSessionCommand(
   interaction: ChatInputCommandInteraction,
-  _bridge: Bridge,
+  bridge: Bridge,
 ): Promise<void> {
   const channel = interaction.channel;
   const bot = channel ? findBotForChannel(routingChannelNameForChannel(channel)) : undefined;
@@ -380,6 +380,24 @@ async function handleSessionCommand(
       return;
     }
   }
+
+  if (interaction.commandName === 'interrupt') {
+    // Same author-derived key as a message (+ current thread) → stops only the caller's own
+    // in-flight turn, keeping session/context.
+    const threadId = channel.isThread() ? channel.id : undefined;
+    const key = conversationKey(bot, interaction.user.id, threadId);
+    const stopped = await bridge.interrupt(key);
+    await interaction
+      .reply({
+        content: stopped
+          ? '🛑 진행 중이던 작업을 멈췄어요. 세션과 맥락은 그대로예요 — 이어서 메시지를 보내면 계속됩니다.'
+          : '멈출 작업이 없어요. (지금 진행 중인 대화가 없어요)',
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => undefined);
+    return;
+  }
+
   if (interaction.commandName === '설명') {
     await interaction
       .reply({ content: renderBotExplainer(bot), flags: MessageFlags.Ephemeral })
@@ -421,6 +439,25 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
 
   const channel = message.channel;
   if (!channel.isSendable()) return;
+
+  // /interrupt (+ aliases): stop ONLY the in-flight turn, keep session/context (/end is a
+  // different meaning — it discards the whole session). MUST be intercepted before
+  // bridge.handleMessage: the per-key queue is blocked by the very turn we're stopping, so
+  // queueing it would deadlock. The key is author-derived (+ current thread), so a user can
+  // only ever interrupt their OWN window (isolation invariant preserved).
+  if (isInterruptCommand(text)) {
+    const threadId = channel.isThread() ? channel.id : undefined;
+    const key = conversationKey(bot, message.author.id, threadId);
+    const interrupted = await bridge.interrupt(key);
+    await message
+      .reply(
+        interrupted
+          ? '🛑 진행 중이던 작업을 멈췄어요. 세션과 맥락은 그대로예요 — 이어서 메시지를 보내면 계속됩니다.'
+          : '멈출 작업이 없어요. (지금 진행 중인 대화가 없어요)',
+      )
+      .catch(() => undefined);
+    return;
+  }
 
   // Determine the reply channel + the thread id that scopes this conversation.
   // conversationKey is ALWAYS derived from the message author → a user can never
@@ -485,6 +522,10 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
   // The message location is persisted to session-map the moment it's created, so a bridge
   // crash/restart mid-turn doesn't strand it: the next boot sweeps and deletes the orphan
   // (see client.ts). Edits serialize through a chain so overlapping awaits can't post twice.
+  // Set by onInterrupted when /interrupt (from another message/slash) stops this turn — flips
+  // the terminal reaction from ✅ to 🛑. Race-free: the bridge calls onInterrupted before
+  // handleMessage resolves, so it's already set when we read it after the await.
+  let interrupted = false;
   let progressMsg: Message | undefined;
   let progressChain: Promise<void> = Promise.resolve();
   const pushProgress = (label: string): Promise<void> => {
@@ -531,6 +572,9 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
           const ownerOnly = await bridge.requiresOwnerApproval(gateKey, reqId);
           await postApprovalButtons(replyChannel, cmd, gateKey, reqId, ownerOnly ? process.env.OWNER_DISCORD_ID : undefined);
         },
+        onInterrupted: () => {
+          interrupted = true;
+        },
       },
       attachments,
       { authorId: message.author.id },
@@ -538,7 +582,8 @@ async function handleMessage(message: Message, bridge: Bridge): Promise<void> {
     if (botUserId) {
       void message.reactions.resolve('⏳')?.users.remove(botUserId).catch(() => undefined);
     }
-    void message.react('✅').catch(() => undefined);
+    // /interrupt stopped the turn → 🛑; otherwise ✅ (done).
+    void message.react(interrupted ? '🛑' : '✅').catch(() => undefined);
     // A typed /end inside a thread closes that thread. The bridge already reset the
     // session above; closing (archive+lock) stops Discord auto-unarchiving the same
     // thread on the next message, so the user gets a fresh thread instead.

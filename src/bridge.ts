@@ -75,6 +75,12 @@ export interface BridgeCallbacks {
    * the click writes a decision file gated-run.sh is polling.
    */
   onApproval?: (cmd: string, key: string, reqId: string) => Promise<void> | void;
+  /**
+   * The in-flight turn was stopped by /interrupt (window + context kept alive). Invoked right
+   * before runTurn returns on interrupt, so the awaiting handler can mark the request message
+   * 🛑 (instead of the ✅ it would post on completion).
+   */
+  onInterrupted?: () => Promise<void> | void;
 }
 
 /**
@@ -110,6 +116,33 @@ const END_COMMANDS = new Set(['/end', '/exit', '/quit', '/reset', '/new', '/종�
 /** Whether `text` is an explicit end-session command. */
 export function isEndCommand(text: string): boolean {
   return END_COMMANDS.has(text.trim().toLowerCase());
+}
+
+/**
+ * Interrupt command aliases. Unlike END_COMMANDS (which kills the window and drops the
+ * session), these stop only the IN-FLIGHT claude turn and keep the window / context alive —
+ * the next message just continues the same conversation. `/그만` is deliberately an END
+ * command, not here, to keep "stop the turn" and "end the session" unambiguous.
+ */
+const INTERRUPT_COMMANDS = new Set(['/interrupt', '/stop', '/중단', '/멈춰', '/멈춤']);
+
+/** Whether `text` is an explicit interrupt command (see {@link INTERRUPT_COMMANDS}). */
+export function isInterruptCommand(text: string): boolean {
+  return INTERRUPT_COMMANDS.has(text.trim().toLowerCase());
+}
+
+/**
+ * Thrown to reject the in-flight {@link tailEventsForStop} awaiter when the user runs
+ * /interrupt. The bridge sends `Escape` to stop claude AND proactively aborts this awaiter so
+ * the per-key queue is released immediately — correct whether or not an ESC-interrupted Claude
+ * Code fires its Stop hook (so no idle-timeout hang). runTurn treats it as a clean, silent
+ * return (the handler already acked 🛑).
+ */
+export class InterruptError extends Error {
+  constructor() {
+    super('interrupted by /interrupt');
+    this.name = 'InterruptError';
+  }
 }
 
 /** Human-facing engine (backend) names for the {@link engineBanner}. */
@@ -160,6 +193,11 @@ export class Bridge {
   private readonly hookScript: string;
   /** Serializes turns per conversation key (see handleMessage). */
   private readonly queue = new KeyedQueue();
+  /**
+   * Per-key AbortController for the turn currently blocked in awaitNextStop. /interrupt
+   * aborts it to release the queue without killing the window (see {@link interrupt}).
+   */
+  private readonly inflight = new Map<string, AbortController>();
 
   constructor(private readonly config: ButlerConfig) {
     this.tmux = new TmuxManager(config.tmuxBin);
@@ -175,6 +213,32 @@ export class Bridge {
   /** The butler data dir (used by the /github-token command to store secrets). */
   get dataDir(): string {
     return this.config.dataDir;
+  }
+
+  /**
+   * /interrupt: stop the in-flight claude turn for `key` WITHOUT ending the session.
+   *
+   * Called from the Discord handler OUTSIDE the per-key queue — the queue is blocked by the
+   * very turn we're stopping, so routing this through it would deadlock. Two things happen:
+   * (1) `Escape` is sent to the window to interrupt claude's current turn, and (2) the blocked
+   * awaitNextStop is proactively aborted so the queue is released immediately (window/context
+   * stay alive; the next message continues the same conversation). Step 2 makes this correct
+   * whether or not an ESC-interrupted Claude Code emits a Stop hook.
+   *
+   * `key` is the author-derived conversationKey, so a user can only ever interrupt their OWN
+   * window (the isolation invariant is preserved).
+   *
+   * @returns true if a turn was actually in flight and aborted; false if nothing was running.
+   */
+  async interrupt(key: string): Promise<boolean> {
+    const windowName = sanitizeKey(key);
+    if (await this.tmux.windowExists(windowName)) {
+      await this.tmux.sendKey(windowName, 'Escape');
+    }
+    const controller = this.inflight.get(key);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   }
 
   /**
@@ -440,9 +504,18 @@ export class Bridge {
             return this.tmux.sendKey(windowName, 'Escape');
           },
         };
-        const waitForStop = this.awaitNextStop(events, awaitCb);
-        await this.tmux.sendText(windowName, fullText);
-        const replyText = await waitForStop;
+        // Register an AbortController so /interrupt can release this awaiter (and the queue)
+        // without killing the window; cleared in the finally below.
+        const abort = new AbortController();
+        this.inflight.set(key, abort);
+        let replyText: string;
+        try {
+          const waitForStop = this.awaitNextStop(events, awaitCb, undefined, abort.signal);
+          await this.tmux.sendText(windowName, fullText);
+          replyText = await waitForStop;
+        } finally {
+          this.inflight.delete(key);
+        }
 
         await this.sessions.touch(key);
         const { cleaned, files } = await this.extractOutgoingFiles(replyText, cwd);
@@ -466,6 +539,12 @@ export class Bridge {
         }
         return;
       } catch (err) {
+        // /interrupt stopped this turn: keep the window + context alive (do NOT kill), signal
+        // the handler so it marks the request message 🛑, then return without a fallback.
+        if (err instanceof InterruptError) {
+          await cb.onInterrupted?.();
+          return;
+        }
         await this.tmux.killWindow(windowName).catch(() => {});
         await this.sessions.remove(key).catch(() => {});
 
@@ -657,11 +736,17 @@ export class Bridge {
     eventsPath: string,
     cb: BridgeCallbacks,
     maxTimeoutMs: number = this.config.replyTimeoutMs,
+    signal?: AbortSignal,
   ): Promise<string> {
-    return tailEventsForStop(eventsPath, cb, {
-      idleTimeoutMs: this.config.idleTimeoutMs,
-      maxTimeoutMs,
-    });
+    return tailEventsForStop(
+      eventsPath,
+      cb,
+      {
+        idleTimeoutMs: this.config.idleTimeoutMs,
+        maxTimeoutMs,
+      },
+      signal,
+    );
   }
 
   /**
@@ -772,6 +857,7 @@ export function tailEventsForStop(
   eventsPath: string,
   cb: BridgeCallbacks,
   opts: TailOptions,
+  signal?: AbortSignal,
 ): Promise<string> {
   const pollMs = opts.pollMs ?? 250;
 
@@ -787,10 +873,14 @@ export function tailEventsForStop(
     let lastProgressLabel = '';
     let lastProgressAt = 0;
 
+    // /interrupt aborts this awaiter → reject with InterruptError so runTurn returns cleanly.
+    const onAbort = (): void => finish(() => rejectPromise(new InterruptError()));
+
     const cleanup = (): void => {
       if (pollTimer) clearTimeout(pollTimer);
       if (idleTimer) clearTimeout(idleTimer);
       clearTimeout(maxTimer);
+      signal?.removeEventListener('abort', onAbort);
     };
     const finish = (fn: () => void): void => {
       if (settled) return;
@@ -909,6 +999,16 @@ export function tailEventsForStop(
       }
       if (!settled) pollTimer = setTimeout(() => void poll(), pollMs);
     };
+
+    // /interrupt aborts this awaiter (rejects with InterruptError). Handle an already-aborted
+    // signal synchronously before any polling starts.
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort);
+    }
 
     // Arm the idle deadline, seek to end-of-file (so we only see events appended
     // from now on), and start polling. The deadlines above fire if no Stop arrives.
