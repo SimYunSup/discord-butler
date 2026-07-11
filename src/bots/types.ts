@@ -26,6 +26,19 @@ export interface ModelEscalation {
   effortTriggers: string[];
   /** Effort level to switch to when an {@link effortTriggers} entry matches (e.g. 'xhigh'). */
   escalatedEffort: string;
+  /**
+   * STICKINESS: an escalation, once triggered, CARRIES FORWARD to later messages in the
+   * same conversation with no trigger — you say "opus" / "심층" once and the thread stays
+   * there until you say otherwise (the live tier is persisted in session-map). These
+   * optional de-escalation triggers are how you say otherwise: a case-insensitive
+   * substring match RESETS that axis back to the bot's base {@link Bot.model}/
+   * {@link Bot.effort}, overriding both the sticky carry-over and any escalation trigger in
+   * the SAME message (an explicit "go back" wins). Omit an axis ⇒ it has no reset word and
+   * stays escalated until the thread ends (`/end`, new thread). The two axes are independent.
+   */
+  modelResetTriggers?: string[];
+  /** Effort-axis de-escalation words. See {@link modelResetTriggers}. */
+  effortResetTriggers?: string[];
 }
 
 /**

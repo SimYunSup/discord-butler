@@ -28,6 +28,29 @@ export interface SessionEntry {
    * grant self-approval to the requesting user (see canApproveGate).
    */
   authorId?: string;
+  /**
+   * The claude model/effort the live window is currently running. Recorded at launch and
+   * updated when a mid-thread escalation injects a /model or /effort switch, so the bridge
+   * can (a) carry a sticky escalation forward and (b) inject only the commands that actually
+   * change. Claude engine only; absent for other backends and older entries.
+   */
+  activeModel?: string;
+  activeEffort?: string;
+  /**
+   * Signature (`engine|model|effort`) of the provider·model·effort banner last posted to
+   * this conversation. The banner is re-posted only when this changes — at start, on an
+   * engine change, and on a model/effort escalation up or down — so a stable-tier thread
+   * isn't spammed. Absent until the first banner.
+   */
+  bannerSig?: string;
+  /**
+   * The live "지금 하는 일" progress status message posted for the IN-FLIGHT turn (the
+   * handler edits it in place as tools run). Persisted so it can be cleaned up if the bridge
+   * is stopped/crashes mid-turn — on the next boot the client sweeps every entry that still
+   * carries one and deletes the orphaned message. Set when created; cleared (message deleted)
+   * when the turn finalizes normally.
+   */
+  progressMsg?: { channelId: string; messageId: string };
 }
 
 /** The whole session map: conversationKey → entry. */
@@ -133,6 +156,19 @@ export class SessionMapStore {
       const existing = map[key];
       if (!existing) return;
       existing.lastActivityIso = new Date().toISOString();
+    });
+  }
+
+  /**
+   * Clears the {@link SessionEntry.progressMsg} pointer for a key, if the entry exists.
+   * Unlike {@link patch}, this NEVER resurrects a removed entry (a `/end` teardown may have
+   * dropped it just before the turn's progress finalizer runs), so it can't leave a sparse
+   * ghost. No-op when the entry or the field is already gone.
+   */
+  async clearProgressMsg(key: string): Promise<void> {
+    await this.mutate((map) => {
+      const e = map[key];
+      if (e) delete e.progressMsg;
     });
   }
 

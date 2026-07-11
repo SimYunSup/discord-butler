@@ -6,7 +6,7 @@ import type { ButlerConfig } from './config.js';
 import type { Bot } from './bots/types.js';
 import { githubTokenEnv } from './bots/github-token.js';
 import { redactPII } from './redact.js';
-import { resolveModelTier } from './bots/model-escalation.js';
+import { buildModelSwitchCommands, resolveModelTier } from './bots/model-escalation.js';
 import { TmuxManager } from './tmux/manager.js';
 import { SessionMapStore } from './persistence/session-map.js';
 import { ensureWorkspace, eventsFile } from './claude/workspace.js';
@@ -249,10 +249,19 @@ export class Bridge {
     const fullText = (base + attachNote).trim();
     if (!fullText) return;
 
-    // Per-message model/effort escalation: resolve the tier from the user's raw
-    // text (base = bot.model/effort; a matching trigger overrides). Only the claude
-    // backend emits these as `--model`/`--effort`; other backends ignore the tier.
-    const tier = resolveModelTier({ model: bot.model, effort: bot.effort }, bot.modelEscalation, text);
+    // Per-message model/effort escalation: resolve the tier from the user's raw text
+    // (base = bot.model/effort; a matching trigger overrides). STICKY — an earlier
+    // escalation carries forward: the sticky tier is the live window's tier recorded at the
+    // end of the previous turn (session-map activeModel/activeEffort), so a triggerless
+    // message keeps it instead of snapping back to the base; a de-escalation word resets it.
+    // Only the claude backend emits `--model`/`--effort`; other backends ignore the tier.
+    const priorEntry = await this.sessions.get(key);
+    const tier = resolveModelTier(
+      { model: bot.model, effort: bot.effort },
+      bot.modelEscalation,
+      text,
+      { model: priorEntry?.activeModel, effort: priorEntry?.activeEffort },
+    );
 
     // 4. Try each engine in order. On timeout/error, kill the window and start the
     //    next engine fresh. Config errors skip to the next fallback.
@@ -302,11 +311,26 @@ export class Bridge {
 
       try {
         const created = await this.tmux.ensureWindow(windowName, cwd, launch);
+        // Mid-thread escalation: a freshly launched window already took the resolved
+        // --model/--effort, but a REUSED (kept-alive) claude window can't take launch flags
+        // — and a task-memory bot (no memory.md) would lose in-RAM context if torn down to
+        // relaunch. Instead inject /model + /effort into the live REPL, only for the axes
+        // that actually change vs. what's active (session-map).
+        if (!created && engineKind === 'claude' && bot.modelEscalation) {
+          const switches = buildModelSwitchCommands(
+            { model: priorEntry?.activeModel, effort: priorEntry?.activeEffort },
+            { model: tier.model, effort: tier.effort },
+          );
+          for (const cmd of switches) await this.tmux.sendText(windowName, cmd);
+        }
         await this.sessions.upsert(key, {
           window: windowName,
           cwd,
           // Record the owner so later turns' author-match guard + gate self-approval work.
           ...(authorId ? { authorId } : {}),
+          // Record the live model/effort so a later mid-thread turn injects only the diff
+          // and a triggerless turn carries the sticky tier forward.
+          ...(engineKind === 'claude' ? { activeModel: tier.model, activeEffort: tier.effort } : {}),
         });
         if (created) {
           const ready = await this.tmux.waitUntilReady(windowName);
